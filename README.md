@@ -57,7 +57,7 @@ only the physical folder layout changed.
 
 ## Status
 
-**Phase A — Stage 0 build-out: done.** **Phase B: Experiment 0 complete, 2026-08-31.**
+**Phase A — Stage 0 build-out: done.** **Phase B: Experiments 0 and 1 complete, 2026-08-31.**
 See `RESULTS_TRACKER.md` for the live rollup.
 
 - Repo is a git repository (`git init` done; see Setup below for identity note).
@@ -76,16 +76,28 @@ See `RESULTS_TRACKER.md` for the live rollup.
   `experiments/exp0_optimizer_bakeoff/exp0_stats.md` for the full analysis,
   including honestly-flagged limitations (pilot workload scale reduced from the
   plan's example for wall-clock reasons; no significance test at n=5 seeds).
+- **Experiment 1 (array-size sensitivity) is complete**, with real results from 65
+  real simulations (5 array sizes × {ws_only, os_only, is_only, best_fixed_per_stage},
+  zero FAILED runs). **Result did not meet the plan's own acceptance criterion**:
+  utilization declines monotonically across the entire 8×8–128×128 range for every
+  method (0/16 doubling transitions meet the plan's <2% sufficiency threshold) —
+  because Exp 1 reused Exp 0's small pilot workload, this doesn't justify or reject
+  16×16/32×32, it just shows smaller-is-better *at that workload scale*. Full,
+  honestly-flagged analysis and recommended next step in
+  `experiments/exp1_array_sensitivity/exp1_stats.md` §8–9.
 - `common/optimizers/{ppo,evolutionary,bayesian_opt}.py`, `a2c.py`, `environment.py`,
-  `brute_force.py` are real, tested implementations now. `common/plotting/figures.py`'s
-  `plot_convergence_curves` is real; the rest of that file remains stubbed until
-  the experiment that needs each figure is reached.
-- `experiments/exp0_optimizer_bakeoff/run_exp0.py` and `analyze_exp0.py` are real,
-  runnable scripts. `run_exp1.py` … `run_exp6.py` are still stubs.
+  `brute_force.py`, `common/simulator_interface.py`'s `combine_simulation_results`
+  are real, tested implementations now. `common/plotting/figures.py`'s
+  `plot_convergence_curves` and `plot_utilization_vs_array_size` are real; the rest
+  of that file remains stubbed until the experiment that needs each figure is reached.
+- `experiments/exp{0,1}_*/run_expN.py` and `analyze_expN.py` are real, runnable
+  scripts. `run_exp2.py` … `run_exp6.py` are still stubs.
 - 25 of 25 tests pass, including a real end-to-end SCALE-Sim smoke test.
 
-Phase B continues with Experiment 1 (array-size sensitivity — independent of
-Exp 0's outcome), then 2 → 3 → 4/5 → 6, updating `RESULTS_TRACKER.md` after each.
+Phase B continues with Experiment 2 (search/training convergence, using the now-
+selected `bayesian_opt`) — independent of Exp 1's outcome — then 3 → 4/5 → 6,
+updating `RESULTS_TRACKER.md` after each. Re-running Experiment 1 at a larger,
+more representative workload scale is flagged as follow-up work, not scheduled yet.
 
 ## Setup
 
