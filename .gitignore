@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+
+# SCALE-Sim run scratch (large/regenerable simulator output that isn't itself
+# a logged CSV result — the raw/processed CSVs and figures under results/ ARE
+# tracked, since they are the evidence the plan's ground rules require to persist)
+*.scale_sim_output/

@@ -1,0 +1,23 @@
+# Core libraries per CODING_AGENT_PLAN.md §2.
+# Unpinned by design for now: run `pip install -r requirements.txt && pip freeze > requirements.txt`
+# once the environment is first built, then commit the exact-pinned result — the plan
+# requires exact version pinning (§2) so this file is a stub, not the final lock.
+numpy
+pandas
+scipy
+matplotlib
+seaborn
+pyyaml
+tqdm
+
+# Optimizer libraries (plan §2 — established, citable implementations rather than
+# reimplementing from scratch, so the methodology chapter can cite them).
+stable-baselines3   # REINFORCE, PPO
+deap                # evolutionary/GA
+optuna              # Bayesian optimization (or scikit-optimize — pick one, see
+                    # common/optimizers/bayesian_opt.py)
+
+# Testing
+pytest
+
+# SCALE-Sim itself is run containerized (Docker) per plan §2, not pip-installed here.

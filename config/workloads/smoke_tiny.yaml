@@ -1,0 +1,6 @@
+# Tiny workload used only by tests/test_smoke_pipeline.py to prove the plumbing
+# end-to-end quickly. Not one of the real experiment workload sweeps.
+name: smoke_tiny
+seq_len: 32
+hidden_dim: 64
+num_heads: 4
