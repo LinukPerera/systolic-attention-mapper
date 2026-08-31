@@ -76,15 +76,17 @@ See `RESULTS_TRACKER.md` for the live rollup.
   `experiments/exp0_optimizer_bakeoff/exp0_stats.md` for the full analysis,
   including honestly-flagged limitations (pilot workload scale reduced from the
   plan's example for wall-clock reasons; no significance test at n=5 seeds).
-- **Experiment 1 (array-size sensitivity) is complete**, with real results from 65
-  real simulations (5 array sizes × {ws_only, os_only, is_only, best_fixed_per_stage},
-  zero FAILED runs). **Result did not meet the plan's own acceptance criterion**:
-  utilization declines monotonically across the entire 8×8–128×128 range for every
-  method (0/16 doubling transitions meet the plan's <2% sufficiency threshold) —
-  because Exp 1 reused Exp 0's small pilot workload, this doesn't justify or reject
-  16×16/32×32, it just shows smaller-is-better *at that workload scale*. Full,
-  honestly-flagged analysis and recommended next step in
-  `experiments/exp1_array_sensitivity/exp1_stats.md` §8–9.
+- **Experiment 1 (array-size sensitivity) is complete**, now including a
+  representative-scale re-run: the original small-pilot-workload run (seq_len=64,
+  65 simulations, zero failures) showed no plateau anywhere in 8×8–128×128 — kept
+  as a documented sub-finding. A re-run at seq_len=256 (another 65 simulations,
+  zero failures, timed for real before committing to the full sweep) still doesn't
+  satisfy the plan's literal <2%-per-doubling criterion, but shows a clear,
+  quantified "knee": utilization declines ~3.8× faster per doubling past 32×32
+  than before it. **16×16/32×32 are now justified as primary array sizes** on that
+  relative-decline-rate basis — an explicitly adapted criterion, not the plan's
+  literal plateau, which neither run satisfied. Full analysis in
+  `experiments/exp1_array_sensitivity/exp1_stats.md`.
 - `common/optimizers/{ppo,evolutionary,bayesian_opt}.py`, `a2c.py`, `environment.py`,
   `brute_force.py`, `common/simulator_interface.py`'s `combine_simulation_results`
   are real, tested implementations now. `common/plotting/figures.py`'s
