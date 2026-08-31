@@ -136,12 +136,19 @@ def current_git_commit(repo_root: Path | None = None) -> str:
     SCALE-Sim run, a missing/unavailable git commit degrades gracefully to a clear
     "unknown" marker rather than raising, so a run is never blocked on git state.
 
+    A `-dirty` suffix is appended when the working tree has uncommitted changes —
+    added 2026-08-31 after Experiment 0's raw CSV logged a commit hash that turned
+    out to predate the very code that produced the run (the working tree was dirty
+    at run time; see exp0_stats.md §9). This doesn't prevent that gap, but makes it
+    visible in the logged data itself instead of silently looking clean.
+
     Args:
-        repo_root: Directory to run `git rev-parse` from; defaults to the current
-            working directory.
+        repo_root: Directory to run `git rev-parse`/`git status` from; defaults to
+            the current working directory.
 
     Returns:
-        The short commit hash, or "unknown" if not in a git repo / git isn't available.
+        The short commit hash (with a `-dirty` suffix if the tree has uncommitted
+        changes), or "unknown" if not in a git repo / git isn't available.
     """
     try:
         proc = subprocess.run(
@@ -152,4 +159,11 @@ def current_git_commit(repo_root: Path | None = None) -> str:
         return "unknown"
     if proc.returncode != 0:
         return "unknown"
-    return proc.stdout.strip()
+    commit = proc.stdout.strip()
+
+    status = subprocess.run(
+        ["git", "status", "--porcelain"], capture_output=True, text=True, cwd=repo_root,
+    )
+    if status.returncode == 0 and status.stdout.strip():
+        commit += "-dirty"
+    return commit

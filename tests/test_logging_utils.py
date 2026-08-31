@@ -4,12 +4,13 @@ every experiment shares (plan §4).
 """
 from __future__ import annotations
 
+import subprocess
 import warnings
 
 import pandas as pd
 import pytest
 
-from common.logging_utils import RAW_COLUMNS, aggregate_results, append_run_row
+from common.logging_utils import RAW_COLUMNS, aggregate_results, append_run_row, current_git_commit
 
 
 def _row(**overrides) -> dict:
@@ -87,3 +88,37 @@ def test_aggregate_results_n1_group_warns_and_gives_nan_std(tmp_path) -> None:
         agg = aggregate_results(csv_path, group_by=["optimizer"], metric_cols=["pe_utilization_pct"])
     assert agg.iloc[0]["pe_utilization_pct_n"] == 1
     assert pd.isna(agg.iloc[0]["pe_utilization_pct_std"])
+
+
+def _run_git(args: list[str], cwd) -> None:
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+
+def test_current_git_commit_clean_tree_has_no_dirty_suffix(tmp_path) -> None:
+    _run_git(["init", "-q"], tmp_path)
+    _run_git(["config", "user.email", "test@example.com"], tmp_path)
+    _run_git(["config", "user.name", "Test"], tmp_path)
+    (tmp_path / "f.txt").write_text("hello")
+    _run_git(["add", "."], tmp_path)
+    _run_git(["commit", "-q", "-m", "initial"], tmp_path)
+
+    commit = current_git_commit(tmp_path)
+    assert commit != "unknown"
+    assert not commit.endswith("-dirty")
+
+
+def test_current_git_commit_dirty_tree_gets_suffix(tmp_path) -> None:
+    _run_git(["init", "-q"], tmp_path)
+    _run_git(["config", "user.email", "test@example.com"], tmp_path)
+    _run_git(["config", "user.name", "Test"], tmp_path)
+    (tmp_path / "f.txt").write_text("hello")
+    _run_git(["add", "."], tmp_path)
+    _run_git(["commit", "-q", "-m", "initial"], tmp_path)
+    (tmp_path / "f.txt").write_text("changed, not committed")
+
+    commit = current_git_commit(tmp_path)
+    assert commit.endswith("-dirty")
+
+
+def test_current_git_commit_not_a_repo_returns_unknown(tmp_path) -> None:
+    assert current_git_commit(tmp_path) == "unknown"
