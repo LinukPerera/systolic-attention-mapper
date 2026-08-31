@@ -9,8 +9,7 @@ sram_kb:
   ifmap: 16
   filter: 16
   ofmap: 16
-dram_bandwidth_bytes_per_cycle: 8
+dram_bandwidth_bytes_per_cycle: 8   # NOTE: not currently simulated — see simulator_interface.write_scale_sim_inputs docstring
 energy_per_cycle_pj: 1.0
-# TODO: confirm this image name/tag against whatever SCALE-Sim Docker image you
-# actually build/pull (docs/CODING_AGENT_PLAN.md §2). Placeholder until then.
-docker_image: "scalesim:latest"
+bytes_per_element: 4   # assume fp32 elements; change per the precision your workloads actually model
+docker_image: "scalesim:latest"   # built from docker/scalesim/Dockerfile — see README.md Setup

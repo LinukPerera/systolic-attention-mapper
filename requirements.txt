@@ -21,3 +21,8 @@ optuna              # Bayesian optimization (or scikit-optimize — pick one, se
 pytest
 
 # SCALE-Sim itself is run containerized (Docker) per plan §2, not pip-installed here.
+# It CANNOT be pip-installed into this same environment even for local development:
+# scalesim==3.0.0 requires numpy<1.25 (verified 2026-08-31 — see
+# docker/scalesim/Dockerfile's comment), which directly conflicts with the numpy>=1.25
+# that pandas/matplotlib above need. This is exactly why it's containerized rather than
+# just "not yet installed" — the two dependency sets cannot coexist in one venv.

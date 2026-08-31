@@ -66,17 +66,15 @@ def test_topology_rows_expand_repeated_stages_and_count_matches() -> None:
     assert "score_times_v_head0" in names and "score_times_v_head3" in names
 
 
-def test_topology_row_conv_lowering_matches_gemm_dims() -> None:
-    """Each topology row's conv-lowering fields must reproduce the source GEMM's (M,K,N)."""
+def test_topology_row_matches_gemm_dims_in_scale_sim_gemm_mode_order() -> None:
+    """Each topology row must carry (M, N, K) — SCALE-Sim's native GEMM-mode column
+    order, verified 2026-08-31 against scalesim==3.0.0's topology_utils.py::load_arrays_gemm
+    with a real end-to-end run (see common/workload_gen.py's docstring)."""
     workload = AttentionWorkload(seq_len=64, hidden_dim=128, num_heads=4)
     shapes = workload_to_gemm_shapes(workload)
     qkv_shape = next(s for s in shapes if s.name == "qkv_projection")
     row = gemm_shapes_to_topology_rows([qkv_shape])[0]
 
-    assert row["IFMAP Height"] == 1
-    assert row["IFMAP Width"] == qkv_shape.m
-    assert row["Channels"] == qkv_shape.k
-    assert row["Filter Height"] == 1
-    assert row["Filter Width"] == 1
-    assert row["Num Filter"] == qkv_shape.n
-    assert row["Strides"] == 1
+    assert row["M"] == qkv_shape.m
+    assert row["N"] == qkv_shape.n
+    assert row["K"] == qkv_shape.k

@@ -1,10 +1,18 @@
 """
-static_heuristics.py — fixed-dataflow baseline mappers (WS-only, OS-only, IS-only, RS-only, best-fixed-per-stage).
+static_heuristics.py — fixed-dataflow baseline mappers (WS-only, OS-only, IS-only, best-fixed-per-stage).
 
 These are the deterministic baselines Experiment 3 compares the learned optimizer
 against, and the array-size study in Experiment 1 sweeps over. Deterministic per
 plan ground rule 3: run once per condition, not across seeds (unlike the learned
 optimizer) — none of these functions take a `seed` argument.
+
+**No RS-only mapper**: CODING_AGENT_PLAN.md §1's module comment for this file lists
+"WS-only, OS-only, IS-only, RS-only, best-fixed-per-stage". Verified 2026-08-31
+against the actual installed `scalesim==3.0.0` package (`scale_config.py`'s
+`valid_df_list = ['os', 'ws', 'is']`): SCALE-Sim does not support a row-stationary
+dataflow at all. This is a real finding, not an oversight — see
+common.simulator_interface.SUPPORTED_DATAFLOW_MODES and its docstring, and flag it
+in the thesis's methodology text if RS was meant to appear there.
 
 A "mapping" here is just a dataflow choice (SCALE-Sim itself, given a dataflow and
 a topology, determines its own internal tiling — this project does not hand-tune
@@ -19,10 +27,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from common.metrics import compute_edp
-from common.simulator_interface import HardwareConfig, run_scale_sim, write_scale_sim_inputs
+from common.simulator_interface import SUPPORTED_DATAFLOW_MODES, HardwareConfig, run_scale_sim, write_scale_sim_inputs
 from common.workload_gen import AttentionWorkload, gemm_shapes_to_topology_rows, workload_to_gemm_shapes
-
-DATAFLOW_MODES: tuple[str, ...] = ("WS", "OS", "IS", "RS")
 
 
 @dataclass(frozen=True)
@@ -50,11 +56,6 @@ def is_only_mapping(workload: AttentionWorkload, hardware_config_path: str) -> M
     return Mapping(dataflow_mode="IS")
 
 
-def rs_only_mapping(workload: AttentionWorkload, hardware_config_path: str) -> Mapping:
-    """Row-stationary-only mapping for one workload/hardware pair. Trivial and deterministic."""
-    return Mapping(dataflow_mode="RS")
-
-
 def best_fixed_per_stage_mapping(
     workload: AttentionWorkload,
     hardware: HardwareConfig,
@@ -70,8 +71,8 @@ def best_fixed_per_stage_mapping(
 
     Args:
         workload: The attention workload to evaluate.
-        hardware: The hardware config to evaluate on (note: takes a loaded
-            HardwareConfig, not a path, since it's used directly by simulator_interface).
+        hardware: The hardware config to evaluate on (a loaded HardwareConfig, not a
+            path, since it's used directly by simulator_interface).
         scratch_dir: Directory to write each candidate's SCALE-Sim inputs/outputs into.
 
     Returns:
@@ -89,13 +90,13 @@ def best_fixed_per_stage_mapping(
     for shape in shapes:
         best_edp: float | None = None
         best_mode: str | None = None
-        for mode in DATAFLOW_MODES:
+        for mode in SUPPORTED_DATAFLOW_MODES:
             rows = gemm_shapes_to_topology_rows([shape])
             run_dir = Path(scratch_dir) / f"{shape.name}_{mode}"
-            topology_path, config_path = write_scale_sim_inputs(rows, hardware, mode, run_dir)
+            topology_path, layout_path, config_path = write_scale_sim_inputs(rows, hardware, mode, run_dir)
             result = run_scale_sim(
-                topology_path, config_path,
-                docker_image=hardware.docker_image, output_dir=run_dir / "output",
+                topology_path, layout_path, config_path,
+                run_name=f"{hardware.name}_{mode}", hardware=hardware, output_dir=run_dir / "output",
             )
             if result.status != "OK":
                 # A candidate that fails to simulate is not silently skipped from the

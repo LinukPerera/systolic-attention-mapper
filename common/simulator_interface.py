@@ -1,20 +1,36 @@
 """
 simulator_interface.py — thin wrapper around (containerized) SCALE-Sim.
 
-Responsible for: loading a hardware config, writing SCALE-Sim's input files
-(topology CSV + INI config), invoking the simulator via Docker, and parsing its
-output report into the raw metrics (cycles, utilization, traffic) that metrics.py
-then turns into the project's reported metrics (EDP etc.).
+Responsible for: loading a hardware config, writing SCALE-Sim's three input files
+(GEMM-mode topology CSV, layout CSV, INI config), invoking the simulator via Docker,
+and parsing its output reports into the raw metrics (cycles, utilization, traffic)
+that metrics.py then turns into the project's reported metrics (EDP etc.).
 
 This module never contains optimizer logic and never decides *what* to simulate —
 callers (baselines/, optimizers/, experiments/) hand it a workload's topology rows
 plus a hardware config and dataflow choice, and get raw numbers back (plan §3:
 "one function = one responsibility").
 
-Docker: `docs/CODING_AGENT_PLAN.md` §2 specifies SCALE-Sim runs containerized.
+Docker: `docs/CODING_AGENT_PLAN.md` §2 specifies SCALE-Sim runs containerized —
+see `docker/scalesim/Dockerfile` (built as the `scalesim:latest` image referenced
+by config/hardware/*.yaml's `docker_image` field). Containerizing isn't just
+following the proposal: SCALE-Sim 3.0.0 requires numpy<1.25 (verified 2026-08-31 —
+it calls `int()` on a non-0-d numpy array, which numpy>=1.25 rejects), which is
+directly incompatible with this project's own numpy>=1.25/1.26 requirement
+(pandas/matplotlib in `common/logging_utils.py`, `common/plotting/`) — the two
+cannot coexist in one Python environment, so the container isn't optional.
+
 run_scale_sim() checks for a reachable Docker daemon and fails loudly with a clear,
 actionable error if one isn't available, rather than silently producing no result
-(plan ground rule 1). It does not fall back to a non-Docker SCALE-Sim install.
+(plan ground rule 1).
+
+Every input-file format, config section/key name, and output-report column name in
+this module was verified 2026-08-31 against the actual installed `scalesim==3.0.0`
+package (source read directly, then confirmed with real end-to-end runs both via a
+local venv and via `docker run` against the built image) — not assumed from
+documentation or general SCALE-Sim familiarity. If you upgrade the pinned scalesim
+version, re-verify every NOTE in this file against the new version's source before
+trusting any number it produces.
 """
 from __future__ import annotations
 
@@ -25,7 +41,20 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import pandas as pd
 import yaml
+
+# SCALE-Sim (verified 2026-08-31, scalesim==3.0.0) supports exactly these three
+# dataflows — `scale_config.py`'s `valid_df_list = ['os', 'ws', 'is']`. There is no
+# "RS" (row-stationary) mode, despite CODING_AGENT_PLAN.md §1's module comment on
+# static_heuristics.py listing "RS-only" — that comment does not match what the
+# actual simulator supports and should be treated as superseded by this finding.
+SUPPORTED_DATAFLOW_MODES: tuple[str, ...] = ("WS", "OS", "IS")
+
+# A single trivial (no custom SRAM banking) layout row applies to every layer,
+# regardless of its shape — see write_scale_sim_inputs. Verified against
+# scalesim/layout_utils.py's 20-field format (LayerName + 20 ints), 2026-08-31.
+_TRIVIAL_LAYOUT_FIELDS: tuple[int, ...] = (1, 1, 1, 1, 1, 1, 0, 1, 2, 0, 1, 2, 0, 1, 0, 1, 2, 0, 1, 2)
 
 
 @dataclass(frozen=True)
@@ -52,8 +81,15 @@ class HardwareConfig:
         array_rows: PE array rows.
         array_cols: PE array columns.
         sram_kb: Per-buffer SRAM sizes in KB, keys "ifmap", "filter", "ofmap".
-        dram_bandwidth_bytes_per_cycle: DRAM interface bandwidth.
+        dram_bandwidth_bytes_per_cycle: DRAM interface bandwidth. **Not currently
+            wired into the simulation** — see write_scale_sim_inputs's docstring;
+            SCALE-Sim's CALC (auto-estimate) bandwidth mode is used instead until
+            the USER-mode Bandwidth field's exact units are independently verified.
         energy_per_cycle_pj: Per-cycle energy figure, used by metrics.compute_edp.
+        bytes_per_element: Bytes per matrix element, used to convert SCALE-Sim's
+            reported DRAM word-traffic into bytes for sram_dram_traffic_bytes. No
+            default — an explicit, documented choice per hardware config (e.g. 4 for
+            fp32, 2 for fp16/bf16), per plan §3 ("no magic numbers").
         docker_image: Docker image (name:tag) that runs SCALE-Sim for this config.
     """
     name: str
@@ -62,12 +98,13 @@ class HardwareConfig:
     sram_kb: dict[str, float]
     dram_bandwidth_bytes_per_cycle: float
     energy_per_cycle_pj: float
+    bytes_per_element: float
     docker_image: str
 
 
 _HARDWARE_REQUIRED_KEYS = (
-    "name", "array_rows", "array_cols", "sram_kb",
-    "dram_bandwidth_bytes_per_cycle", "energy_per_cycle_pj", "docker_image",
+    "name", "array_rows", "array_cols", "sram_kb", "dram_bandwidth_bytes_per_cycle",
+    "energy_per_cycle_pj", "bytes_per_element", "docker_image",
 )
 
 
@@ -91,14 +128,9 @@ def load_hardware_config(path: str) -> HardwareConfig:
     return HardwareConfig(
         name=data["name"], array_rows=data["array_rows"], array_cols=data["array_cols"],
         sram_kb=data["sram_kb"], dram_bandwidth_bytes_per_cycle=data["dram_bandwidth_bytes_per_cycle"],
-        energy_per_cycle_pj=data["energy_per_cycle_pj"], docker_image=data["docker_image"],
+        energy_per_cycle_pj=data["energy_per_cycle_pj"], bytes_per_element=data["bytes_per_element"],
+        docker_image=data["docker_image"],
     )
-
-
-_TOPOLOGY_FIELDNAMES = (
-    "LayerName", "IFMAP Height", "IFMAP Width", "Filter Height",
-    "Filter Width", "Channels", "Num Filter", "Strides",
-)
 
 
 def write_scale_sim_inputs(
@@ -106,62 +138,132 @@ def write_scale_sim_inputs(
     hardware: HardwareConfig,
     dataflow_mode: str,
     out_dir: Path,
-) -> tuple[Path, Path]:
-    """Write SCALE-Sim's two input files (topology.csv, config.cfg) into out_dir.
+) -> tuple[Path, Path, Path]:
+    """Write SCALE-Sim's three input files (topology.csv, layout.csv, config.cfg) into out_dir.
+
+    Bandwidth: uses SCALE-Sim's CALC (auto-estimate) mode rather than wiring
+    hardware.dram_bandwidth_bytes_per_cycle through as a USER-mode value — the
+    USER-mode `Bandwidth` field's exact units (words/cycle per which buffer?) were
+    not independently verified against real output the way every other format
+    choice in this module was, and guessing would risk silently corrupting every
+    downstream traffic/EDP number (plan ground rule 1). This means
+    hardware.dram_bandwidth_bytes_per_cycle is presently a *documented*, not yet
+    *simulated*, hardware axis — a real gap to close (with the same real-run
+    verification approach used for everything else here) before an experiment
+    treats DRAM bandwidth as an independent variable.
+
+    Layout: every layer gets the same trivial (no custom SRAM banking) layout row —
+    _TRIVIAL_LAYOUT_FIELDS — since none of this project's experiments vary SRAM
+    interleaving; SCALE-Sim requires a layout file to exist regardless.
 
     Args:
         topology_rows: Output of workload_gen.gemm_shapes_to_topology_rows.
         hardware: The hardware config to simulate on.
-        dataflow_mode: One of "WS", "OS", "IS", "RS" (SCALE-Sim's dataflow setting).
+        dataflow_mode: One of SUPPORTED_DATAFLOW_MODES ("WS", "OS", "IS").
         out_dir: Directory to write into; created if it doesn't exist. Conventionally
             <exp>/results/raw/<run_id>/.
 
     Returns:
-        (topology_path, config_path).
+        (topology_path, layout_path, config_path).
 
     Raises:
-        ValueError: If dataflow_mode isn't a recognised SCALE-Sim dataflow string.
+        ValueError: If dataflow_mode isn't a SCALE-Sim-supported dataflow string.
     """
-    if dataflow_mode not in ("WS", "OS", "IS", "RS"):
-        raise ValueError(f"dataflow_mode must be one of WS/OS/IS/RS, got {dataflow_mode!r}.")
+    if dataflow_mode not in SUPPORTED_DATAFLOW_MODES:
+        raise ValueError(
+            f"dataflow_mode must be one of {SUPPORTED_DATAFLOW_MODES} (SCALE-Sim does not support "
+            f"'RS' — see SUPPORTED_DATAFLOW_MODES docstring); got {dataflow_mode!r}."
+        )
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # --- topology.csv: GEMM mode, "LayerName, M, N, K," (trailing comma required —
+    # scalesim's parser does `row.split(',')[:-1]`, i.e. it expects and discards a
+    # trailing empty field). Verified against a real run, 2026-08-31.
     topology_path = out_dir / "topology.csv"
     with open(topology_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(_TOPOLOGY_FIELDNAMES))
-        writer.writeheader()
+        f.write("Layer name, M, N, K,\n")
         for row in topology_rows:
-            writer.writerow(row)
+            f.write(f"{row['LayerName']}, {row['M']}, {row['N']}, {row['K']},\n")
 
-    # INI-style config, per SCALE-Sim v2's [general]/[architecture_presets] sections.
-    # NOTE (same caveat as gemm_shapes_to_topology_rows): confirm this section/key
-    # layout against the actual installed SCALE-Sim version before trusting output.
+    # --- layout.csv: one trivial row per layer, same trailing-comma convention.
+    layout_path = out_dir / "layout.csv"
+    layout_header = (
+        "Layer name, IFMAP Height Intraline Factor, IFMAP Width Intraline Factor, "
+        "Filter Height Intraline Factor, Filter Width Intraline Factor, Channel Intraline Factor, "
+        "Num Filter Intraline Factor, IFMAP Height Intraline Order, IFMAP Width Intraline Order, "
+        "Channel Intraline Order, IFMAP Height Interline Order, IFMAP Width Interline Order, "
+        "Channel Interline Order, Num Filter Intraline Order, Channel Intraline Order, "
+        "Filter Height Intraline Order, Filter Width Intraline Order, Num Filter Interline Order, "
+        "Channel Interline Order, Filter Height Interline Order, Filter Width Interline Order,\n"
+    )
+    with open(layout_path, "w", newline="") as f:
+        f.write(layout_header)
+        for row in topology_rows:
+            fields = ", ".join(str(v) for v in _TRIVIAL_LAYOUT_FIELDS)
+            f.write(f"{row['LayerName']}, {fields},\n")
+
+    # --- config.cfg: INI sections/keys as scalesim==3.0.0 actually reads them.
+    # NOTE (verified 2026-08-31 by reading scale_config.py::read_conf_file and
+    # confirming with a real run): `TopologyCsvLoc` must live under
+    # [architecture_presets], NOT [network_presets] as its own header comment implies
+    # — read_conf_file has a bug where the `section` variable is left at
+    # 'architecture_presets' when it reads TopologyCsvLoc. A `[network_presets]`
+    # section must still exist (config.has_section(...) is checked) but its content
+    # is irrelevant. If you upgrade scalesim, re-verify this — it looks exactly like
+    # the kind of thing an upstream fix would move.
+    run_name = f"{hardware.name}_{dataflow_mode}"
     config_path = out_dir / "config.cfg"
     config_text = (
         "[general]\n"
-        f"run_name = {hardware.name}_{dataflow_mode}\n"
+        f"run_name = {run_name}\n"
+        "\n"
+        "[run_presets]\n"
+        "InterfaceBandwidth = CALC\n"
+        "UseRamulatorTrace = False\n"
         "\n"
         "[architecture_presets]\n"
         f"ArrayHeight = {hardware.array_rows}\n"
         f"ArrayWidth = {hardware.array_cols}\n"
-        f"IfmapSramSzkB = {hardware.sram_kb.get('ifmap', 0)}\n"
-        f"FilterSramSzkB = {hardware.sram_kb.get('filter', 0)}\n"
-        f"OfmapSramSzkB = {hardware.sram_kb.get('ofmap', 0)}\n"
-        f"Bandwidth = {hardware.dram_bandwidth_bytes_per_cycle}\n"
+        f"ifmapsramszkB = {int(hardware.sram_kb.get('ifmap', 0))}\n"
+        f"filtersramszkB = {int(hardware.sram_kb.get('filter', 0))}\n"
+        f"ofmapsramszkB = {int(hardware.sram_kb.get('ofmap', 0))}\n"
+        "IfmapOffset = 0\n"
+        "FilterOffset = 10000000\n"
+        "OfmapOffset = 20000000\n"
         f"Dataflow = {dataflow_mode.lower()}\n"
+        "ReadRequestBuffer = 60\n"
+        "WriteRequestBuffer = 60\n"
+        f"TopologyCsvLoc = \"{topology_path.name}\"\n"
+        "\n"
+        "[layout]\n"
+        "IfmapCustomLayout = False\n"
+        "FilterCustomLayout = False\n"
+        "IfmapSRAMBankBandwidth = 10\n"
+        "IfmapSRAMBankNum = 10\n"
+        "IfmapSRAMBankPort = 2\n"
+        "FilterSRAMBankBandwidth = 10\n"
+        "FilterSRAMBankNum = 10\n"
+        "FilterSRAMBankPort = 2\n"
+        "\n"
+        "[network_presets]\n"
+        "\n"
+        "[sparsity]\n"
+        "SparsitySupport = False\n"
     )
     config_path.write_text(config_text)
 
-    return topology_path, config_path
+    return topology_path, layout_path, config_path
 
 
 def run_scale_sim(
     topology_path: Path,
+    layout_path: Path,
     config_path: Path,
     *,
-    docker_image: str,
+    run_name: str,
+    hardware: HardwareConfig,
     output_dir: Path,
     timeout_s: float | None = None,
 ) -> SimulationResult:
@@ -174,8 +276,15 @@ def run_scale_sim(
 
     Args:
         topology_path: Path from write_scale_sim_inputs.
+        layout_path: Path from write_scale_sim_inputs.
         config_path: Path from write_scale_sim_inputs.
-        docker_image: Image (name:tag) to run — typically hardware.docker_image.
+        run_name: Must match the `run_name` baked into config_path's [general]
+            section (write_scale_sim_inputs uses "<hardware.name>_<dataflow_mode>") —
+            SCALE-Sim writes its report to `<output_dir>/<run_name>/`, verified
+            2026-08-31 (`simulator.py::run`: `report_path = self.top_path + '/' + self.conf.get_run_name()`).
+        hardware: Supplies both the Docker image to run (hardware.docker_image) and
+            hardware.bytes_per_element (needed to convert the parsed report's
+            DRAM word-traffic into bytes).
         output_dir: Directory SCALE-Sim should write its report into; created if needed.
         timeout_s: Optional wall-clock timeout; a timeout is recorded as FAILED, not a crash.
 
@@ -206,14 +315,17 @@ def run_scale_sim(
     output_dir.mkdir(parents=True, exist_ok=True)
     host_dir = topology_path.parent.resolve()
 
+    # docker/scalesim/Dockerfile sets ENTRYPOINT ["python", "-m", "scalesim.scale"],
+    # so the container is run with just scale.py's own CLI args.
     cmd = [
         "docker", "run", "--rm",
         "-v", f"{host_dir}:/workspace",
-        docker_image,
-        "python", "scale.py",
-        "-c", f"/workspace/{config_path.name}",
+        hardware.docker_image,
         "-t", f"/workspace/{topology_path.name}",
+        "-l", f"/workspace/{layout_path.name}",
+        "-c", f"/workspace/{config_path.name}",
         "-p", "/workspace/output",
+        "-i", "gemm",
     ]
 
     start = time.monotonic()
@@ -231,11 +343,14 @@ def run_scale_sim(
         return SimulationResult(
             exec_cycles=0, pe_utilization_pct=0.0, sram_dram_traffic_bytes=0,
             wall_clock_s=wall_clock_s, status="FAILED",
-            notes=f"docker run exited {proc.returncode}: {proc.stderr.strip()[-2000:]}",
+            notes=f"docker run exited {proc.returncode}: {proc.stderr.strip()[-2000:] or proc.stdout.strip()[-2000:]}",
         )
 
     try:
-        return _parse_scale_sim_report(host_dir / "output", wall_clock_s=wall_clock_s)
+        report_dir = host_dir / "output" / run_name
+        return _parse_scale_sim_report(
+            report_dir, wall_clock_s=wall_clock_s, hardware_bytes_per_element=hardware.bytes_per_element,
+        )
     except (FileNotFoundError, KeyError, ValueError) as e:
         # Report layout didn't match what this parser expects — fail loudly with the
         # raw stdout attached, rather than guessing a number (plan ground rule 1).
@@ -249,59 +364,86 @@ def run_scale_sim(
         )
 
 
-def _parse_scale_sim_report(output_dir: Path, *, wall_clock_s: float) -> SimulationResult:
-    """Parse SCALE-Sim's output report into a SimulationResult.
+def _parse_scale_sim_report(
+    report_dir: Path,
+    *,
+    wall_clock_s: float,
+    hardware_bytes_per_element: float | None,
+) -> SimulationResult:
+    """Parse SCALE-Sim's COMPUTE_REPORT.csv + DETAILED_ACCESS_REPORT.csv into a SimulationResult.
 
-    NOTE: the filename/columns below reflect SCALE-Sim v2's typical output (an
-    `*_avg_stats.csv` per-run summary with per-layer cycles/utilization/DRAM-traffic
-    columns). **Confirm this against the actual output your installed SCALE-Sim
-    version produces** — if it raises here, that is the first thing to fix, not a
-    signal to fall back to a guessed number (plan ground rule 1). This function is
-    the single place that needs updating if the report format differs.
+    Column names and file layout verified 2026-08-31 against a real run of the
+    installed scalesim==3.0.0 package (both via a local venv and via `docker run`
+    against the built image — identical output). Specifically:
+
+    - `COMPUTE_REPORT.csv`: one row per topology layer, columns include
+      "Total Cycles (incl. prefetch)" and "Overall Util %" (note the real space
+      before '%', and values are comma-separated with a trailing comma per row).
+      exec_cycles is summed across layers ("Total Cycles (incl. prefetch)" —
+      SCALE-Sim simulates each layer independently with no cross-layer pipelining
+      modeled, so summing is the correct total for running all layers serially,
+      which is how this project uses SCALE-Sim: one "layer" per attention GEMM stage).
+      pe_utilization_pct is the cycle-weighted mean of "Overall Util %" across layers.
+    - `DETAILED_ACCESS_REPORT.csv`: "DRAM IFMAP Reads", "DRAM Filter Reads",
+      "DRAM OFMAP Writes" columns give DRAM traffic in *words*, not bytes — summed
+      and multiplied by hardware_bytes_per_element to get sram_dram_traffic_bytes.
+
+    If you upgrade the installed scalesim version, re-verify these column names
+    against a real run before trusting this parser's output.
 
     Args:
-        output_dir: The directory SCALE-Sim was asked to write its report into.
+        report_dir: `<output_dir>/<run_name>/`, per run_scale_sim's docstring.
         wall_clock_s: Wall-clock time measured by the caller around the docker run.
+        hardware_bytes_per_element: hardware.bytes_per_element; required to convert
+            word counts to bytes — pass None only from a caller that doesn't need
+            sram_dram_traffic_bytes (there is none today; kept explicit rather than
+            defaulted, per plan §3 "no magic numbers").
 
     Returns:
         A SimulationResult with status="OK".
 
     Raises:
-        FileNotFoundError: If no matching report file is found.
-        KeyError: If an expected column is missing from the report.
-        ValueError: If a value can't be parsed as the expected type.
+        FileNotFoundError: If the expected report files aren't found.
+        KeyError: If an expected column is missing.
+        ValueError: If hardware_bytes_per_element is None, or a value can't be parsed.
     """
-    candidates = sorted(Path(output_dir).glob("*avg_stats.csv"))
-    if not candidates:
-        raise FileNotFoundError(f"No '*avg_stats.csv' report found under {output_dir}.")
-    report_path = candidates[0]
+    if hardware_bytes_per_element is None:
+        raise ValueError(
+            "_parse_scale_sim_report requires hardware_bytes_per_element to convert "
+            "DRAM word-traffic into bytes — no default, per plan §3 'no magic numbers'."
+        )
 
-    with open(report_path, newline="") as f:
-        rows = list(csv.DictReader(f))
-    if not rows:
-        raise ValueError(f"{report_path} has a header but no data rows.")
+    compute_path = Path(report_dir) / "COMPUTE_REPORT.csv"
+    detail_path = Path(report_dir) / "DETAILED_ACCESS_REPORT.csv"
+    if not compute_path.exists():
+        raise FileNotFoundError(f"No COMPUTE_REPORT.csv found under {report_dir}.")
+    if not detail_path.exists():
+        raise FileNotFoundError(f"No DETAILED_ACCESS_REPORT.csv found under {report_dir}.")
 
-    # Aggregate across topology rows (one per GEMM/head, per
-    # workload_gen.gemm_shapes_to_topology_rows) into one whole-attention-block result:
-    # cycles sum (layers ran sequentially), utilization is a cycle-weighted mean,
-    # traffic sums.
-    total_cycles = 0
-    total_traffic = 0
-    util_x_cycles = 0.0
-    for row in rows:
-        cycles = int(float(row["Compute time(cycles)"]))
-        util_pct = float(row["Overall utilization(%)"])
-        traffic = int(float(row.get("DRAM traffic(bytes)", 0)))
-        total_cycles += cycles
-        total_traffic += traffic
-        util_x_cycles += util_pct * cycles
+    compute_df = pd.read_csv(compute_path, sep=r"\s*,\s*", engine="python").rename(columns=str.strip)
+    detail_df = pd.read_csv(detail_path, sep=r"\s*,\s*", engine="python").rename(columns=str.strip)
 
+    cycles_col = "Total Cycles (incl. prefetch)"
+    util_col = "Overall Util %"
+    for col in (cycles_col, util_col):
+        if col not in compute_df.columns:
+            raise KeyError(f"{compute_path}: expected column {col!r} not found; columns are {list(compute_df.columns)}.")
+
+    total_cycles = int(compute_df[cycles_col].sum())
+    util_x_cycles = float((compute_df[util_col] * compute_df[cycles_col]).sum())
     mean_util = (util_x_cycles / total_cycles) if total_cycles > 0 else 0.0
+
+    traffic_cols = ("DRAM IFMAP Reads", "DRAM Filter Reads", "DRAM OFMAP Writes")
+    for col in traffic_cols:
+        if col not in detail_df.columns:
+            raise KeyError(f"{detail_path}: expected column {col!r} not found; columns are {list(detail_df.columns)}.")
+    total_words = int(sum(detail_df[col].sum() for col in traffic_cols))
+    total_traffic_bytes = int(total_words * hardware_bytes_per_element)
 
     return SimulationResult(
         exec_cycles=total_cycles,
         pe_utilization_pct=mean_util,
-        sram_dram_traffic_bytes=total_traffic,
+        sram_dram_traffic_bytes=total_traffic_bytes,
         wall_clock_s=wall_clock_s,
         status="OK",
     )
