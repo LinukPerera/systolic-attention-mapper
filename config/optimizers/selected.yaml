@@ -1,0 +1,15 @@
+# Written by Experiment 0 (optimizer bake-off), 2026-08-31. Referenced (not
+# re-decided) by Experiments 2-6, per CODING_AGENT_PLAN.md §6 Exp 0's acceptance
+# criteria. Full justification: ../../experiments/exp0_optimizer_bakeoff/exp0_stats.md
+selected_optimizer: bayesian_opt
+module: common.optimizers.bayesian_opt
+class: BayesianOptOptimizer
+hyperparameters_file: config/optimizers/bayesian_opt.yaml
+reason: >
+  Across 5 seeds on the exp0_pilot workload/16x16 array, bayesian_opt (optuna TPE)
+  had the smallest mean distance from the brute-force ground-truth best reward
+  (1.06, vs 2.08 for a2c/ppo and 3.70 for evolutionary), converged fastest
+  (mean 0.6 iterations to within 5% of ground truth, vs 5.2 for a2c/ppo — 2.75 for
+  evolutionary but only 4/5 seeds converged at all), and had the lowest run-to-run
+  variance in final reward (std 0.83, vs evolutionary's 2.56). See exp0_stats.md
+  §7-8 for the full data and analysis this reason is based on.

@@ -1,48 +1,65 @@
 """
 optimizers/base.py — common interface every candidate optimizer implements.
 
-Defines the state/action/reward contract so reinforce.py, ppo.py, evolutionary.py,
-and bayesian_opt.py are interchangeable from the experiment scripts' point of view
-(plan §1). The state/action/reward design itself belongs in each concrete
-optimizer's module and must be documented there per plan §3.
-
-STATUS: stub — interface only.
+**Revised 2026-08-31** from Stage 0's speculative reset()/step()/is_converged()
+design: that design assumed each optimizer exposes its own iteration loop, but the
+two library-backed candidates (A2C/PPO via stable-baselines3) own their training
+loop internally (`.learn(total_timesteps=...)`) and only expose per-step results via
+a callback — there is no clean way to single-step them from outside without
+reimplementing their update logic. Rather than force an awkward fit (and risk a
+subtly wrong per-step accounting for a library that manages its own state), every
+optimizer instead exposes one `run()` that performs its whole budgeted search and
+returns every real, individually-simulated candidate it evaluated along the way, in
+evaluation order — this is what run_expN.py scripts actually need to log (one raw
+CSV row per (exp, config, seed, iteration), per CODING_AGENT_PLAN.md §4).
+is_converged() is dropped here too: it belonged to Experiment 2's not-yet-defined
+convergence criterion and doesn't need to live on this interface — Experiment 2 can
+compute it directly from the logged reward trajectory in results/raw/, the same way
+every other aggregate statistic in this project is computed (in logging_utils /
+figures, from the raw CSV, not inside the optimizer that produced it).
 """
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+
+from common.optimizers.environment import AttentionMappingProblem, EvalResult
 
 
 class DataflowTilingOptimizer(ABC):
-    """Common interface for a dataflow+tiling search/learning method.
+    """Common interface for a dataflow+SRAM-partition search/learning method.
 
-    Concrete subclasses (REINFORCE, PPO, evolutionary, Bayesian optimization) each
-    define their own state/action representation internally but expose this same
-    reset/step contract so experiment scripts don't need to know which one is in use.
+    Concrete subclasses (A2C, PPO, evolutionary, Bayesian optimization) each define
+    their own internal state/policy representation but expose this one `run()`
+    contract so experiment scripts don't need to know which one is in use.
     """
 
     @abstractmethod
-    def reset(self, *, seed: int) -> Any:
-        """Reset the optimizer for a fresh run with the given seed. Returns initial state."""
-        raise NotImplementedError
+    def run(self, problem: AttentionMappingProblem, *, n_iterations: int, seed: int) -> list[EvalResult]:
+        """Run this optimizer's full budgeted search once against a real problem.
 
-    @abstractmethod
-    def step(self) -> dict:
-        """Run one iteration (one candidate mapping proposed + evaluated + optimizer updated).
+        Every EvalResult returned corresponds to one real, individually-run
+        SCALE-Sim simulation via problem.evaluate() — there is no interpolation,
+        caching across calls, or synthetic reward standing in for a real one
+        (plan ground rule 1).
+
+        Args:
+            problem: The (workload, hardware) search problem to optimize.
+            n_iterations: Number of candidate actions to evaluate (the "iteration
+                budget" plan §6 Experiment 0 refers to). What one "iteration" means
+                internally is candidate-specific (one env step for A2C/PPO, one
+                generation's population for the evolutionary candidate, one trial
+                for Bayesian optimization) but each must correspond to exactly one
+                real problem.evaluate() call, so n_iterations means the same thing
+                (one real simulation) across every candidate.
+            seed: Random seed — must seed this optimizer's own RNG (and, where
+                applicable, its underlying library's RNG) completely, so re-running
+                with the same seed reproduces the same sequence of evaluated actions.
 
         Returns:
-            A dict with at least {"iteration", "reward", "mapping", "metrics"} —
-            logged verbatim via common.logging_utils.append_run_row by the caller.
-        """
-        raise NotImplementedError
+            One EvalResult per evaluated candidate, in evaluation order.
 
-    @abstractmethod
-    def is_converged(self) -> bool:
-        """Whether this run has met Experiment 2's stated convergence criterion.
-
-        Must return False until Experiment 2 has defined and configured a concrete
-        criterion (plan §6, Exp 2 acceptance criteria: "stated as a formula, not
-        just 'it looked flat'").
+        Raises:
+            RuntimeError: Propagated from problem.evaluate() if Docker isn't
+                reachable — an environment problem, not a run outcome.
         """
         raise NotImplementedError

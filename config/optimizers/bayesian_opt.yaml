@@ -1,0 +1,6 @@
+# optuna TPE sampler — no separate hyperparameters beyond seed and n_iterations
+# (both supplied per-run, not from this file) are currently exposed by
+# common/optimizers/bayesian_opt.py; this file exists for consistency with the
+# other three candidates and as the place to add sampler tuning (e.g.
+# n_startup_trials) if Experiment 0's results show it's needed.
+{}

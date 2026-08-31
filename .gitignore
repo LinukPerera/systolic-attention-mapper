@@ -18,7 +18,14 @@ env/
 .vscode/
 .idea/
 
-# SCALE-Sim run scratch (large/regenerable simulator output that isn't itself
-# a logged CSV result — the raw/processed CSVs and figures under results/ ARE
-# tracked, since they are the evidence the plan's ground rules require to persist)
-*.scale_sim_output/
+# SCALE-Sim run scratch — every AttentionMappingProblem.evaluate() call's
+# topology.csv/layout.csv/config.cfg + SCALE-Sim's full per-layer trace CSVs.
+# Large (a 330-evaluation Experiment 0 run produced ~3.5GB / 32,500 files here) and
+# fully regenerable from a re-run; NOT itself a logged result — every metric it
+# could offer is already in results/raw/*.csv, which IS tracked, since that CSV
+# (plus results/processed/, results/figures/) is the evidence the plan's ground
+# rules require to persist (plan §4, ground rule 2).
+**/results/raw/_scratch/
+
+# Claude Code local tool state (not project content).
+.claude/

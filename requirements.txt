@@ -1,28 +1,30 @@
-# Core libraries per CODING_AGENT_PLAN.md §2.
-# Unpinned by design for now: run `pip install -r requirements.txt && pip freeze > requirements.txt`
-# once the environment is first built, then commit the exact-pinned result — the plan
-# requires exact version pinning (§2) so this file is a stub, not the final lock.
-numpy
-pandas
-scipy
-matplotlib
-seaborn
-pyyaml
-tqdm
+# Core libraries per CODING_AGENT_PLAN.md §2. Pinned to the exact versions verified
+# working together in this project's own environment, 2026-08-31 (Python 3.11.9).
+numpy==1.26.4
+pandas==2.3.3
+scipy==1.16.3
+matplotlib==3.10.7
+seaborn==0.13.2
+pyyaml==6.0.3
+tqdm==4.67.1
 
 # Optimizer libraries (plan §2 — established, citable implementations rather than
 # reimplementing from scratch, so the methodology chapter can cite them).
-stable-baselines3   # REINFORCE, PPO
-deap                # evolutionary/GA
-optuna              # Bayesian optimization (or scikit-optimize — pick one, see
-                    # common/optimizers/bayesian_opt.py)
+# NOTE: stable-baselines3 has no plain REINFORCE (verified 2026-08-31 — its
+# algorithms are A2C, DDPG, DQN, HER, PPO, SAC, TD3); common/optimizers/a2c.py uses
+# A2C in its place. See that module's docstring.
+stable-baselines3==2.9.0   # A2C (substitutes for REINFORCE), PPO
+gymnasium==1.3.0           # stable-baselines3's environment API
+deap==1.4                  # evolutionary/GA
+optuna==4.9.0               # Bayesian optimization
 
 # Testing
-pytest
+pytest==9.1.1
 
 # SCALE-Sim itself is run containerized (Docker) per plan §2, not pip-installed here.
 # It CANNOT be pip-installed into this same environment even for local development:
 # scalesim==3.0.0 requires numpy<1.25 (verified 2026-08-31 — see
-# docker/scalesim/Dockerfile's comment), which directly conflicts with the numpy>=1.25
-# that pandas/matplotlib above need. This is exactly why it's containerized rather than
-# just "not yet installed" — the two dependency sets cannot coexist in one venv.
+# docker/scalesim/Dockerfile's comment), which directly conflicts with the numpy
+# pinned above (pandas/matplotlib/stable-baselines3 all need numpy>=1.25/1.26). This
+# is exactly why it's containerized rather than just "not yet installed" — the two
+# dependency sets cannot coexist in one venv.

@@ -1,0 +1,6 @@
+# stable-baselines3 A2C hyperparameters, used in place of "REINFORCE" — see
+# common/optimizers/a2c.py's module docstring for why. Kept small relative to SB3's
+# usual defaults because Experiment 0's pilot iteration budget is tens, not
+# thousands, of real simulator calls.
+n_steps: 5
+learning_rate: 0.0007

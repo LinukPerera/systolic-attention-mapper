@@ -142,6 +142,23 @@ def gemm_shapes_to_topology_rows(shapes: list[GemmShape]) -> list[dict[str, int 
     return rows
 
 
+def total_macs(shapes: list[GemmShape]) -> int:
+    """Total multiply-accumulate operations across all GEMM shapes (accounting for repeat).
+
+    Used as a workload-size-independent normalizer for the memory-traffic term in
+    the optimizers' reward function (common/optimizers/environment.py) — traffic
+    bytes per MAC is comparable across workloads of different size, where raw
+    traffic bytes would not be.
+
+    Args:
+        shapes: Output of workload_to_gemm_shapes.
+
+    Returns:
+        Sum over shapes of (m * k * n * repeat).
+    """
+    return sum(s.m * s.k * s.n * s.repeat for s in shapes)
+
+
 def load_workload_yaml(path: str) -> AttentionWorkload:
     """Load an AttentionWorkload from a config/workloads/*.yaml file.
 

@@ -1,0 +1,8 @@
+# stable-baselines3 PPO hyperparameters. n_steps/batch_size kept tiny relative to
+# SB3's usual defaults (n_steps=2048) because Experiment 0's pilot iteration budget
+# is tens of real simulator calls, not thousands — n_steps must not exceed the
+# iteration budget or PPO never completes a first rollout/update.
+n_steps: 5
+batch_size: 5
+n_epochs: 2
+learning_rate: 0.0003

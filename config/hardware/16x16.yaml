@@ -1,0 +1,16 @@
+# Primary 16x16 systolic array config — CODING_AGENT_PLAN.md §6 Experiment 0 uses
+# this exact array size for the pilot optimizer bake-off. SRAM sizes/bandwidth are
+# placeholder-reasonable (not yet justified by Experiment 1's sensitivity study,
+# which runs after Exp 0 per the plan's dependency order) — revisit once Exp 1's
+# results exist, per CODING_AGENT_PLAN.md §6 Experiment 1's acceptance criteria.
+name: 16x16
+array_rows: 16
+array_cols: 16
+sram_kb:
+  ifmap: 64
+  filter: 64
+  ofmap: 64
+dram_bandwidth_bytes_per_cycle: 32   # NOTE: not currently simulated — see simulator_interface.write_scale_sim_inputs docstring
+energy_per_cycle_pj: 1.0             # placeholder — no citable per-cycle energy figure sourced yet; revisit before citing EDP numbers in the thesis
+bytes_per_element: 4                 # assume fp32
+docker_image: "scalesim:latest"

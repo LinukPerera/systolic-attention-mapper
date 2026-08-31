@@ -138,6 +138,8 @@ def write_scale_sim_inputs(
     hardware: HardwareConfig,
     dataflow_mode: str,
     out_dir: Path,
+    *,
+    sram_kb: dict[str, float] | None = None,
 ) -> tuple[Path, Path, Path]:
     """Write SCALE-Sim's three input files (topology.csv, layout.csv, config.cfg) into out_dir.
 
@@ -162,6 +164,11 @@ def write_scale_sim_inputs(
         dataflow_mode: One of SUPPORTED_DATAFLOW_MODES ("WS", "OS", "IS").
         out_dir: Directory to write into; created if it doesn't exist. Conventionally
             <exp>/results/raw/<run_id>/.
+        sram_kb: Optional override for the ifmap/filter/ofmap SRAM split, keyed like
+            hardware.sram_kb. Defaults to hardware.sram_kb itself. This is how
+            common.optimizers.environment.AttentionMappingProblem searches the SRAM
+            partition ("tiling") axis without needing a different HardwareConfig per
+            candidate — the total budget stays hardware's, only the split changes.
 
     Returns:
         (topology_path, layout_path, config_path).
@@ -177,6 +184,7 @@ def write_scale_sim_inputs(
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    effective_sram_kb = sram_kb if sram_kb is not None else hardware.sram_kb
 
     # --- topology.csv: GEMM mode, "LayerName, M, N, K," (trailing comma required —
     # scalesim's parser does `row.split(',')[:-1]`, i.e. it expects and discards a
@@ -226,9 +234,12 @@ def write_scale_sim_inputs(
         "[architecture_presets]\n"
         f"ArrayHeight = {hardware.array_rows}\n"
         f"ArrayWidth = {hardware.array_cols}\n"
-        f"ifmapsramszkB = {int(hardware.sram_kb.get('ifmap', 0))}\n"
-        f"filtersramszkB = {int(hardware.sram_kb.get('filter', 0))}\n"
-        f"ofmapsramszkB = {int(hardware.sram_kb.get('ofmap', 0))}\n"
+        # floored at 1 KB: a 0 KB buffer is not a meaningful "very small SRAM" point,
+        # it's a config SCALE-Sim isn't designed to accept — a 1 KB buffer still
+        # legitimately stresses/fails a candidate action that starves that buffer.
+        f"ifmapsramszkB = {max(1, int(effective_sram_kb.get('ifmap', 0)))}\n"
+        f"filtersramszkB = {max(1, int(effective_sram_kb.get('filter', 0)))}\n"
+        f"ofmapsramszkB = {max(1, int(effective_sram_kb.get('ofmap', 0)))}\n"
         "IfmapOffset = 0\n"
         "FilterOffset = 10000000\n"
         "OfmapOffset = 20000000\n"

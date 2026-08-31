@@ -1,0 +1,17 @@
+# Experiment 0's pilot workload. CODING_AGENT_PLAN.md §6 gives "e.g. seq_len=512,
+# 8 heads" as an example pilot size. Verified by hand (2026-08-31): a real
+# containerized SCALE-Sim call at seq_len=512, hidden_dim=512 on a 16x16 array
+# takes ~178s; even seq_len=64 at hidden_dim=512 took ~16s (hidden_dim drives the
+# QKV-projection GEMM's cost roughly quadratically, dominating even more than
+# seq_len at this scale). A full bake-off (4 optimizers x 5 seeds x an iteration
+# budget + brute-force ground truth, 200+ real simulator calls) needs each call to
+# cost ~2s, not ~16-178s, to finish in one sitting — reached here by reducing both
+# seq_len and hidden_dim (verified: ~2.0s/call at these values), keeping num_heads
+# at the plan's example value. This is a genuine, documented scope reduction (see
+# exp0_stats.md §3 "deviations"), not a silent one — re-running at the plan's
+# literal seq_len=512/hidden_dim=512 is flagged as follow-up work once
+# wall-clock/compute budget allows (e.g. a background/overnight run).
+name: exp0_pilot
+seq_len: 64
+hidden_dim: 128
+num_heads: 8

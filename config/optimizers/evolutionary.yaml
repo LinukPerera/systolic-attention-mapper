@@ -1,0 +1,6 @@
+# deap GA hyperparameters — see common/optimizers/evolutionary.py.
+population_size: 5
+crossover_prob: 0.5
+mutation_prob: 0.3
+mutation_sigma: 0.2
+tournament_size: 3
