@@ -27,7 +27,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from common.metrics import compute_edp
-from common.simulator_interface import SUPPORTED_DATAFLOW_MODES, HardwareConfig, run_scale_sim, write_scale_sim_inputs
+from common.simulator_interface import (
+    SUPPORTED_DATAFLOW_MODES,
+    HardwareConfig,
+    SimulationResult,
+    run_scale_sim,
+    write_scale_sim_inputs,
+)
 from common.workload_gen import AttentionWorkload, gemm_shapes_to_topology_rows, workload_to_gemm_shapes
 
 
@@ -39,6 +45,25 @@ class Mapping:
     tiling for the given dataflow, they don't search a tiling space.)
     """
     dataflow_mode: str
+
+
+@dataclass(frozen=True)
+class StageAttempt:
+    """One (stage, dataflow) candidate evaluated while searching for the best-fixed-per-stage mapping."""
+    stage_name: str
+    dataflow_mode: str
+    result: SimulationResult
+
+
+@dataclass(frozen=True)
+class BestFixedPerStageResult:
+    """Full output of best_fixed_per_stage_mapping: the winning choice per stage,
+    its already-computed SimulationResult (no re-simulation needed to use it), and
+    every (stage, dataflow) candidate actually evaluated along the way — logged as
+    evidence by the caller, per plan §3, not discarded once the winner is known."""
+    winners: dict[str, Mapping]
+    winner_results: dict[str, SimulationResult]
+    all_attempts: list[StageAttempt]
 
 
 def ws_only_mapping(workload: AttentionWorkload, hardware_config_path: str) -> Mapping:
@@ -61,13 +86,20 @@ def best_fixed_per_stage_mapping(
     hardware: HardwareConfig,
     *,
     scratch_dir: Path,
-) -> dict[str, Mapping]:
+) -> BestFixedPerStageResult:
     """Best single dataflow chosen independently per GEMM stage (QKV / QK^T / score*V),
     determined empirically by actually simulating every (stage, dataflow) pair and
     picking the one with the lowest EDP — not assumed from intuition.
 
     Still a *fixed* (non-learned) baseline: the choice is made once via exhaustive
     per-stage evaluation, not learned via search, and is deterministic (no seed).
+
+    Note: SCALE-Sim's `Dataflow` setting applies to a whole simulation run, not
+    per-layer, so there is no single simulation that directly measures "stage A
+    with its best dataflow, stage B with its (different) best dataflow" together —
+    use common.simulator_interface.combine_simulation_results on this function's
+    winner_results.values() to get one whole-workload SimulationResult comparable
+    to ws_only/os_only/is_only, as run_exp1.py does.
 
     Args:
         workload: The attention workload to evaluate.
@@ -76,8 +108,8 @@ def best_fixed_per_stage_mapping(
         scratch_dir: Directory to write each candidate's SCALE-Sim inputs/outputs into.
 
     Returns:
-        Dict from stage name ("qkv_projection", "qk_transpose", "score_times_v") to
-        the winning Mapping for that stage.
+        A BestFixedPerStageResult with the winning Mapping and SimulationResult per
+        stage, plus every (stage, dataflow) candidate actually evaluated.
 
     Raises:
         RuntimeError: Propagated from run_scale_sim if Docker isn't available/reachable
@@ -85,11 +117,14 @@ def best_fixed_per_stage_mapping(
             without a real run).
     """
     shapes = workload_to_gemm_shapes(workload)
-    best: dict[str, Mapping] = {}
+    winners: dict[str, Mapping] = {}
+    winner_results: dict[str, SimulationResult] = {}
+    all_attempts: list[StageAttempt] = []
 
     for shape in shapes:
         best_edp: float | None = None
         best_mode: str | None = None
+        best_result: SimulationResult | None = None
         for mode in SUPPORTED_DATAFLOW_MODES:
             rows = gemm_shapes_to_topology_rows([shape])
             run_dir = Path(scratch_dir) / f"{shape.name}_{mode}"
@@ -98,21 +133,24 @@ def best_fixed_per_stage_mapping(
                 topology_path, layout_path, config_path,
                 run_name=f"{hardware.name}_{mode}", hardware=hardware, output_dir=run_dir / "output",
             )
+            all_attempts.append(StageAttempt(stage_name=shape.name, dataflow_mode=mode, result=result))
             if result.status != "OK":
                 # A candidate that fails to simulate is not silently skipped from the
                 # comparison — it simply can't win it. The caller's experiment script
-                # is responsible for logging this raw result as evidence (plan §3).
+                # is responsible for logging this raw result as evidence (plan §3);
+                # it's already captured in all_attempts above.
                 continue
             edp = compute_edp(result, energy_per_cycle_pj=hardware.energy_per_cycle_pj)
             if best_edp is None or edp < best_edp:
-                best_edp, best_mode = edp, mode
+                best_edp, best_mode, best_result = edp, mode, result
 
-        if best_mode is None:
+        if best_mode is None or best_result is None:
             raise RuntimeError(
                 f"best_fixed_per_stage_mapping: every dataflow candidate FAILED for stage "
                 f"'{shape.name}'; cannot pick a best-fixed-per-stage mapping without at least "
-                "one successful run. Check the individual FAILED results under scratch_dir."
+                "one successful run. Check all_attempts for the individual FAILED results."
             )
-        best[shape.name] = Mapping(dataflow_mode=best_mode)
+        winners[shape.name] = Mapping(dataflow_mode=best_mode)
+        winner_results[shape.name] = best_result
 
-    return best
+    return BestFixedPerStageResult(winners=winners, winner_results=winner_results, all_attempts=all_attempts)

@@ -72,6 +72,51 @@ class SimulationResult:
             raise ValueError(f"SimulationResult.status must be 'OK' or 'FAILED', got {self.status!r}.")
 
 
+def combine_simulation_results(results: list[SimulationResult]) -> SimulationResult:
+    """Combine several separately-run SimulationResults into one whole-workload result.
+
+    Needed because SCALE-Sim's `Dataflow` setting applies to an entire simulation
+    run, not per-layer — there is no way to simulate "stage A with WS, stage B with
+    OS" in one call. `common.baselines.static_heuristics.best_fixed_per_stage_mapping`
+    finds each stage's best dataflow by running it separately, and this function
+    aggregates those separate results into one figure comparable to the
+    single-dataflow baselines (ws_only/os_only/is_only), using exactly the same
+    combination rule `_parse_scale_sim_report` already uses across layers *within*
+    one run: exec_cycles sums, pe_utilization_pct is the cycle-weighted mean,
+    sram_dram_traffic_bytes and wall_clock_s sum.
+
+    Args:
+        results: One SimulationResult per stage, in any order. Must be non-empty.
+
+    Returns:
+        A single combined SimulationResult. status is "FAILED" (with a `notes`
+        explaining which stage failed) if any input result is FAILED — a workload
+        with one infeasible stage has no defined whole-workload metrics, so this is
+        not silently computed from only the OK stages (plan ground rule 1).
+    """
+    if not results:
+        raise ValueError("combine_simulation_results: results must be non-empty.")
+
+    failed = [r for r in results if r.status != "OK"]
+    if failed:
+        return SimulationResult(
+            exec_cycles=0, pe_utilization_pct=0.0, sram_dram_traffic_bytes=0,
+            wall_clock_s=sum(r.wall_clock_s for r in results), status="FAILED",
+            notes=f"{len(failed)}/{len(results)} stage(s) FAILED: {'; '.join(r.notes for r in failed if r.notes)}",
+        )
+
+    total_cycles = sum(r.exec_cycles for r in results)
+    util_x_cycles = sum(r.pe_utilization_pct * r.exec_cycles for r in results)
+    mean_util = (util_x_cycles / total_cycles) if total_cycles > 0 else 0.0
+    return SimulationResult(
+        exec_cycles=total_cycles,
+        pe_utilization_pct=mean_util,
+        sram_dram_traffic_bytes=sum(r.sram_dram_traffic_bytes for r in results),
+        wall_clock_s=sum(r.wall_clock_s for r in results),
+        status="OK",
+    )
+
+
 @dataclass(frozen=True)
 class HardwareConfig:
     """One systolic-array hardware configuration, loaded from config/hardware/*.yaml.

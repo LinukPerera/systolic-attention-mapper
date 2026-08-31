@@ -64,9 +64,36 @@ def plot_convergence_curves(df: pd.DataFrame, out_path: Path, *, value_col: str 
     plt.close(fig)
 
 
-def plot_utilization_vs_array_size(df: Any, out_path: Path) -> None:
-    """Line plot of utilization vs. array size, one line per dataflow mode (Experiment 1)."""
-    raise NotImplementedError
+def plot_utilization_vs_array_size(df: pd.DataFrame, out_path: Path) -> None:
+    """Line plot of utilization vs. array size, one line per method (Experiment 1).
+
+    Args:
+        df: Columns ["array_size", "method", "pe_utilization_pct"] — one row per
+            (array_size, method); array_size is a single int (e.g. 8 for "8x8",
+            assumes square arrays, true for every config/hardware/*.yaml so far).
+        out_path: Base output path; writes `<out_path>.png` and `<out_path>.svg`.
+    """
+    import matplotlib.pyplot as plt
+
+    apply_style()
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+
+    for method_name, method_df in df.groupby("method"):
+        method_df = method_df.sort_values("array_size")
+        color = DATAFLOW_COLORS.get(method_name.upper() if isinstance(method_name, str) else method_name)
+        ax.plot(
+            method_df["array_size"], method_df["pe_utilization_pct"],
+            label=str(method_name), color=color, marker="o", linewidth=2,
+        )
+
+    ax.set_xscale("log", base=2)
+    ax.set_xticks(sorted(df["array_size"].unique()))
+    ax.get_xaxis().set_major_formatter(plt.matplotlib.ticker.ScalarFormatter())
+    ax.set_xlabel("Array size (N×N)")
+    ax.set_ylabel("PE utilization (%)")
+    ax.legend()
+    save_figure(fig, out_path)
+    plt.close(fig)
 
 
 def plot_utilization_heatmap(df: Any, out_path: Path) -> None:

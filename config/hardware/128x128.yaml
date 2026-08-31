@@ -1,0 +1,19 @@
+# 128x128 systolic array config -- part of Experiment 1's array-size
+# sensitivity sweep (8x8, 16x16, 32x32, 64x64, 128x128), CODING_AGENT_PLAN.md §6.
+# SRAM/bandwidth/energy figures are deliberately IDENTICAL to 16x16.yaml (not
+# scaled with array size): Experiment 1's independent variable is array size
+# alone -- varying SRAM alongside it would confound the sensitivity result.
+# Revisit only if exp1_stats.md's analysis finds this held-constant SRAM becomes
+# a bottleneck at the largest size (that would itself be a reportable finding,
+# not a reason to silently change the config after the fact).
+name: 128x128
+array_rows: 128
+array_cols: 128
+sram_kb:
+  ifmap: 64
+  filter: 64
+  ofmap: 64
+dram_bandwidth_bytes_per_cycle: 32   # NOTE: not currently simulated -- see simulator_interface.write_scale_sim_inputs docstring
+energy_per_cycle_pj: 1.0             # placeholder -- no citable per-cycle energy figure sourced yet; revisit before citing EDP numbers in the thesis
+bytes_per_element: 4                 # assume fp32
+docker_image: "scalesim:latest"
