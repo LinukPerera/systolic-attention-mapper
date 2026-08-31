@@ -17,6 +17,20 @@ is still summarized here, honestly, not omitted.
 
 ---
 
+## Build status (infrastructure, not an experiment result)
+
+Phase A Stage 0 (repo scaffold as a git repo + real `common/` plumbing —
+`workload_gen.py`, `simulator_interface.py`, `metrics.py`, `logging_utils.py`,
+`plotting/style.py`, `baselines/static_heuristics.py`, all with passing unit
+tests) is complete as of 2026-08-31; see [README.md](README.md#status) for detail.
+This is prerequisite plumbing, not a result — it does not move any experiment
+below off 🔴, and none of the `[RESULT]`/`[INTERPRETATION]` blocks change until an
+experiment actually runs. Docker's CLI is installed but its daemon is not
+currently reachable on this machine — the one thing blocking any real
+`run_scale_sim` call, and therefore Phase B / Experiment 0.
+
+---
+
 ## Status at a glance
 
 | # | Experiment | Status | Date run | Headline result | Report |
@@ -120,4 +134,4 @@ whether anything failed.
 
 ---
 
-_Last updated: 2026-08-31 (scaffold created; no experiments run yet)._
+_Last updated: 2026-08-31 (Stage 0 build-out complete; no experiments run yet)._
