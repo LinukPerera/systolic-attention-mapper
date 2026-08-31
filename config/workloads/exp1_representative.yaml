@@ -1,0 +1,19 @@
+# Experiment 1 RE-RUN workload — replaces exp0_pilot.yaml (seq_len=64) as Exp 1's
+# fixed workload. Chosen 2026-08-31 per RESULTS_TRACKER.md's "Justified array
+# sizes" decision: the first Exp 1 run (kept, not deleted — plan ground rule 6)
+# was inconclusive because seq_len=64 is smaller than every array size tested,
+# producing a monotonic utilization decline rather than a real plateau.
+#
+# seq_len=256/hidden_dim=256 is a candidate midpoint between the too-small pilot
+# (64/128) and the plan's literal example (512/512, measured at ~178s/call —
+# 4+ hours for the full 90-call sweep, per exp0_stats.md §3).
+#
+# VERIFIED 2026-08-31 (one hardware config, 16x16, all 4 methods = 13 real
+# simulations): mean ~11.4s/call (whole-workload single-dataflow calls ~21s each;
+# per-stage-search calls 3-14s each depending on stage size), ~127s real simulator
+# time for one array size. Full 5-array-size sweep estimated ~635s (~11 min) --
+# kept at this scale, no further reduction needed.
+name: exp1_representative
+seq_len: 256
+hidden_dim: 256
+num_heads: 8

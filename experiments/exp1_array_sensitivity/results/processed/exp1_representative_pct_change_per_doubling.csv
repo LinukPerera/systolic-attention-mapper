@@ -1,0 +1,17 @@
+method,from_array_size,to_array_size,utilization_pct_change,meets_sufficiency_criterion
+best_fixed_per_stage,8,16,-4.925792317741435,False
+best_fixed_per_stage,16,32,-9.585454114579624,False
+best_fixed_per_stage,32,64,-47.97895284812012,False
+best_fixed_per_stage,64,128,-54.62709699247339,False
+is_only,8,16,-15.379038937786992,False
+is_only,16,32,-24.75667374992645,False
+is_only,32,64,-44.097882485016,False
+is_only,64,128,-48.59521404526031,False
+os_only,8,16,-11.88489059754143,False
+os_only,16,32,-17.615268973947217,False
+os_only,32,64,-42.03768775068097,False
+os_only,64,128,-51.494393368386284,False
+ws_only,8,16,-7.943418329856038,False
+ws_only,16,32,-13.700719690603558,False
+ws_only,32,64,-50.284765295326494,False
+ws_only,64,128,-58.510280676370655,False
