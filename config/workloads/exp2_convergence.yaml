@@ -1,0 +1,13 @@
+# Experiment 2's fixed workload. hidden_dim=256/num_heads=4 gives head_dim=64,
+# per the standard adopted in config/workloads/README.md after Experiment 1's
+# head_dim diagnosis (exp1_stats.md §8) -- num_heads=4 (not the plan step's
+# example num_heads=8/hidden_dim=512) chosen after timing both for real:
+# hidden_dim=512/num_heads=8 cost 16.8s/call (seq_len=64) -- Experiment 2 needs
+# a "generous iteration budget" (plan §6) across >=5 seeds of the selected
+# optimizer (bayesian_opt), so 16.8s/call was too slow (~70 min for a
+# reasonable budget). hidden_dim=256/num_heads=4 (head_dim=64 preserved
+# exactly) measured at 5.83s/call -- ~20 min for 40 iterations x 5 seeds.
+name: exp2_convergence
+seq_len: 64
+hidden_dim: 256
+num_heads: 4
