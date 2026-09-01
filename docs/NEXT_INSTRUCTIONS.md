@@ -7,24 +7,17 @@ it from this file rather than marking it complete in place.
 
 ---
 
-## 2. Decide whether Experiment 0's optimizer selection still holds
-
-`bayesian_opt` was selected on the *old*, smaller action space. A larger
-per-stage action space may change which search strategy is most stable/scalable
-(e.g. evolutionary or RL may handle a bigger joint discrete+continuous space
-differently than TPE). Either re-run Experiment 0's bake-off on the new action
-space (small pilot scale, same as before) to confirm the selection still holds,
-or explicitly document a reasoned decision not to and proceed with
-`bayesian_opt` regardless — don't silently carry the old selection forward
-unexamined.
-
 ## 3. Re-run Experiment 3 (main sweep) on the new action space
 
-Same grid as before (seq_len∈{128,256} × array∈{16×16,32×32}, real, measured
-infeasibility of 512/1024 at 16×16 stands). Log to a new CSV (don't overwrite
-the existing `results/raw/exp3.csv`), re-run the significance tests, and check
-whether `bayesian_opt` now closes the gap with `best_fixed_per_stage`. Update
-`exp3_stats.md` with both the old and new action-space results, clearly labelled.
+`config/optimizers/selected.yaml` now points to `a2c`, not `bayesian_opt` (Exp0
+was re-examined on the new action space — see `RESULTS_TRACKER.md`'s "Selected
+optimizer" section — use whatever it currently says, don't hardcode `a2c` either
+in case this changes again). Same grid as before (seq_len∈{128,256} ×
+array∈{16×16,32×32}, real, measured infeasibility of 512/1024 at 16×16 stands).
+Log to a new CSV (don't overwrite the existing `results/raw/exp3.csv`), re-run
+the significance tests, and check whether the selected optimizer now closes the
+gap with `best_fixed_per_stage`. Update `exp3_stats.md` with both the old and
+new action-space results, clearly labelled.
 
 ## 4. Re-run Experiment 5 (ablation) on the new action space
 
