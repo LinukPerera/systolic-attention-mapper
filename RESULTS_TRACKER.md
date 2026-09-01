@@ -40,7 +40,7 @@ A2C in its place (documented in `common/optimizers/a2c.py`).
 | 1 | Array-size sensitivity | 🟢 Complete | 2026-09-01 | 16×16/32×32 justified mechanistically: the utilization "knee" tracks `head_dim`, not `seq_len` — a stated prediction (doubling head_dim 32→64 shifts the knee one array-size doubling higher) confirmed by a dedicated run (see [Justified array sizes](#justified-array-sizes) below) | [exp1_stats.md](experiments/exp1_array_sensitivity/exp1_stats.md) |
 | 2 | Search/training convergence | 🟢 Complete | 2026-09-01 | 5/5 seeds converged (mean iter 4.00, std 0.00) by a pre-stated criterion; a 10× stricter ε changed nothing — a structural criterion limitation (early-trial clustering), not a tuning gap. Exp 3 uses fixed budgets, not early-stopping, as a result | [exp2_stats.md](experiments/exp2_convergence/exp2_stats.md) |
 | 3 | Main sweep vs. baselines | 🟢 Complete | 2026-09-01 | `bayesian_opt` loses to `best_fixed_per_stage` significantly in all 4 cells (−1.9% to −9.1%) but beats the best single-dataflow baseline significantly in all 4 (+0.2% to +0.8%) — a real action-space asymmetry, not a search failure: the optimizer can't express per-stage dataflow choice (see §8 of the report) | [exp3_stats.md](experiments/exp3_main_sweep/exp3_stats.md) |
-| 4 | Scalability study | 🔴 Not started | — | — | [exp4_stats.md](experiments/exp4_scalability/exp4_stats.md) |
+| 4 | Scalability study | 🟢 Complete | 2026-09-01 | RQ3 answered: optimizer's advantage over best baseline shrinks and reverses at seq_len=512 (+0.2–0.8% → −1.6%, one seed missed the relocated optimum within the fixed 6-iter budget); cost grows substantially and faster on 16×16 than 32×32 | [exp4_stats.md](experiments/exp4_scalability/exp4_stats.md) |
 | 5 | Ablation study | 🔴 Not started | — | — | [exp5_stats.md](experiments/exp5_ablation/exp5_stats.md) |
 | 6 | Generalization test (stretch) | 🔴 Not started | — | — | [exp6_stats.md](experiments/exp6_generalization/exp6_stats.md) |
 
@@ -115,11 +115,13 @@ new interpretation here that isn't already in the source report.
 - **[LIMITATION]** Grid reduced to seq_len∈{128,256} (real, measured infeasibility of 512/1024 at 16×16 — see [Justified array sizes](#justified-array-sizes)); 6-iteration optimizer budget; no multiple-comparisons correction applied by default (reported both ways).
 
 ### Experiment 4 — Scalability study
-**Status:** 🔴 Not started
+**Status:** 🟢 Complete (2026-09-01)
 
-- **[RESULT]** —
-- **[INTERPRETATION]** —
-- **[LIMITATION]** —
+- **[RESULT]** %-improvement over the best single-dataflow baseline is small but positive and flat at seq_len 128/256 (+0.23% to +0.79%, both array sizes), then reverses to −1.64% (CI ±4.55%) at seq_len=512 @ 32×32 — the only array size that could reach that scale (16×16 fails, real infeasibility).
+- **[RESULT]** The reversal is driven by one seed of five landing far below the other four, which matched the new best baseline almost exactly — std jumps from 0.08–0.30 to 3.10 at this point.
+- **[RESULT]** The best static baseline itself changes with scale: `os_only` wins at seq_len≤256 (every Experiment 3 point); `ws_only` wins at seq_len=512.
+- **[INTERPRETATION] — direct RQ3 answer.** The fixed small (6-iteration) budget is enough when the landscape's optimum sits where it usually does, but not reliably enough when the optimum relocates at larger scale. Cost grows substantially with seq_len and grows faster on 16×16 than 32×32 for the same seq_len (consistent with Experiment 1's smaller-arrays-cost-more-to-simulate finding).
+- **[LIMITATION]** One point at the new scale, one array size; a budget-sensitivity re-run (larger iteration budget at seq_len=512) is the natural, falsifiable follow-up — flagged, not run.
 
 ### Experiment 5 — Ablation study
 **Status:** 🔴 Not started
