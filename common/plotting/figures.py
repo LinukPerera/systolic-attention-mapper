@@ -150,14 +150,74 @@ def plot_pct_improvement_bars(df: pd.DataFrame, out_path: Path) -> None:
     plt.close(fig)
 
 
-def plot_scalability_panels(df: Any, out_path: Path) -> None:
-    """Two-panel line plot: (a) %-improvement vs. scale, (b) optimizer cost vs. scale (Experiment 4)."""
-    raise NotImplementedError
+def plot_scalability_panels(df: pd.DataFrame, out_path: Path) -> None:
+    """Two-panel line plot: (a) %-improvement vs. scale, (b) optimizer cost vs. scale (Experiment 4).
+
+    Args:
+        df: Columns ["seq_len", "array_size", "pct_improvement_mean", "pct_improvement_ci",
+            "cost_mean", "cost_ci"] — one row per (seq_len, array_size) point.
+            `cost_mean`/`cost_ci` are whatever cost unit the caller chose (e.g.
+            convergence iteration, or wall-clock seconds) — labeled via `cost_label`.
+        out_path: Base output path; writes `<out_path>.png` and `<out_path>.svg`.
+    """
+    import matplotlib.pyplot as plt
+
+    apply_style()
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.5))
+
+    for array_size, g in df.groupby("array_size"):
+        g = g.sort_values("seq_len")
+        color = DATAFLOW_COLORS.get(str(array_size))  # falls back to matplotlib default cycling if unmapped
+        ax1.errorbar(g["seq_len"], g["pct_improvement_mean"], yerr=g["pct_improvement_ci"].fillna(0),
+                     label=f"{array_size}x{array_size}", color=color, marker="o", capsize=4, linewidth=2)
+        ax2.errorbar(g["seq_len"], g["cost_mean"], yerr=g["cost_ci"].fillna(0),
+                     label=f"{array_size}x{array_size}", color=color, marker="o", capsize=4, linewidth=2)
+
+    ax1.set_xlabel("seq_len")
+    ax1.set_ylabel("% improvement over best-single-dataflow baseline")
+    ax1.axhline(0, color="black", linewidth=0.8)
+    ax1.legend()
+
+    ax2.set_xlabel("seq_len")
+    ax2.set_ylabel("optimizer cost")
+    ax2.legend()
+
+    save_figure(fig, out_path)
+    plt.close(fig)
 
 
-def plot_ablation_bars(df: Any, out_path: Path) -> None:
-    """Bar chart comparing dataflow-only / tiling-only / joint variants per metric, with error bars (Experiment 5)."""
-    raise NotImplementedError
+def plot_ablation_bars(df: pd.DataFrame, out_path: Path) -> None:
+    """Bar chart comparing dataflow-only / tiling-only / joint variants per metric, with error bars (Experiment 5).
+
+    Args:
+        df: Columns ["cell", "variant", "value_mean", "value_ci"] — one row per
+            (cell, variant); `cell` a pre-formatted label (as in
+            plot_utilization_heatmap), `variant` one of
+            "dataflow_only"/"tiling_only"/"joint".
+        out_path: Base output path; writes `<out_path>.png` and `<out_path>.svg`.
+    """
+    import matplotlib.pyplot as plt
+
+    apply_style()
+    variants = ["dataflow_only", "tiling_only", "joint"]
+    variant_colors = {"dataflow_only": DATAFLOW_COLORS["OS"], "tiling_only": DATAFLOW_COLORS["WS"],
+                       "joint": OPTIMIZER_COLORS["bayesian_opt"]}
+    cells = list(df["cell"].unique())
+    x = np.arange(len(cells))
+    width = 0.8 / len(variants)
+
+    fig, ax = plt.subplots(figsize=(max(6, 1.8 * len(cells)), 4.5))
+    for i, variant in enumerate(variants):
+        sub = df[df["variant"] == variant].set_index("cell").reindex(cells)
+        ax.bar(x + i * width, sub["value_mean"], width, yerr=sub["value_ci"].fillna(0),
+               label=variant, color=variant_colors[variant], capsize=4)
+
+    ax.set_xticks(x + width * (len(variants) - 1) / 2)
+    ax.set_xticklabels(cells)
+    ax.set_ylabel("PE utilization (%)")
+    ax.legend()
+    save_figure(fig, out_path)
+    plt.close(fig)
 
 
 def plot_generalization_comparison(df: Any, out_path: Path) -> None:
