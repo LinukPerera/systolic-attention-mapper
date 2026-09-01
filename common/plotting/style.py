@@ -81,9 +81,15 @@ def save_figure(fig: Any, out_path_stub: Path) -> None:
     Args:
         fig: A matplotlib Figure.
         out_path_stub: Output path without extension — writes `<out_path_stub>.png`
-            and `<out_path_stub>.svg`.
+            and `<out_path_stub>.svg`. `out_path_stub`'s own name is used verbatim
+            (string-concatenated, not `Path.with_suffix()`'d) — `with_suffix` treats
+            everything after the *last* dot in the name as a replaceable extension,
+            which silently mangles any stub containing a literal dot (e.g. a label
+            like "exp2_epsilon0.1_..." collapses to "exp2_epsilon0.png", and a second
+            call with a different real suffix then overwrites the first — a real bug
+            hit and fixed 2026-09-01, not a hypothetical one).
     """
     out_path_stub = Path(out_path_stub)
     out_path_stub.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path_stub.with_suffix(".png"), dpi=DPI)
-    fig.savefig(out_path_stub.with_suffix(".svg"))
+    fig.savefig(out_path_stub.with_name(out_path_stub.name + ".png"), dpi=DPI)
+    fig.savefig(out_path_stub.with_name(out_path_stub.name + ".svg"))

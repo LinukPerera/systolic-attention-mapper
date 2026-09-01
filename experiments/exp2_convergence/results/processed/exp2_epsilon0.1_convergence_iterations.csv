@@ -1,0 +1,6 @@
+seed,n_iterations,convergence_iteration,converged,final_best_reward
+0,40,4,True,85.988087
+1,40,4,True,85.972325
+2,40,4,True,86.015401
+3,40,4,True,84.812455
+4,40,4,True,85.801807
