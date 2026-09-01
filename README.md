@@ -57,7 +57,7 @@ only the physical folder layout changed.
 
 ## Status
 
-**Phase A — Stage 0 build-out: done.** **Phase B: Experiments 0, 1, and 2 complete, 2026-09-01.**
+**Phase A — Stage 0 build-out: done.** **Phase B: Experiments 0–3 complete, 2026-09-01.**
 See `RESULTS_TRACKER.md` for the live rollup.
 
 - Repo is a git repository (`git init` done; see Setup below for identity note).
@@ -99,19 +99,39 @@ See `RESULTS_TRACKER.md` for the live rollup.
   same iteration. Honestly flagged: the criterion triggers well before the
   trajectories visually stabilize, a real looseness in the chosen ε, reported
   rather than hidden. Full analysis in `experiments/exp2_convergence/exp2_stats.md`.
+- **Experiment 3 (main sweep vs. baselines, the core evidence chapter) is
+  complete**: a 2×2 grid (seq_len∈{128,256} × array∈{16×16,32×32}, real per-call
+  cost measured before committing — seq_len 512/1024 are infeasible at 16×16,
+  see Exp 1 above) — 173 real simulations, zero failures. **Central finding:**
+  `bayesian_opt` loses significantly to `best_fixed_per_stage` in every cell but
+  beats the best single-dataflow baseline significantly in every cell — a real
+  **action-space asymmetry**, not a search failure: the optimizer's action space
+  (`common/optimizers/environment.py`) applies one dataflow to the whole
+  workload per run, while `best_fixed_per_stage` specializes per GEMM stage,
+  something the optimizer currently cannot express. Flagged as concrete,
+  important follow-up work (extend the action space to per-stage dataflow
+  choice) directly relevant to the thesis's "joint learning" contribution claim
+  and Experiment 5's ablation design. Full analysis, with both t-test and
+  Wilcoxon significance and multiple-comparisons disclosure, in
+  `experiments/exp3_main_sweep/exp3_stats.md`.
 - `common/optimizers/{ppo,evolutionary,bayesian_opt}.py`, `a2c.py`, `environment.py`,
-  `brute_force.py`, `common/simulator_interface.py`'s `combine_simulation_results`
-  are real, tested implementations now. `common/plotting/figures.py`'s
-  `plot_convergence_curves` and `plot_utilization_vs_array_size` are real; the rest
-  of that file remains stubbed until the experiment that needs each figure is reached.
-- `experiments/exp{0,1,2}_*/run_expN.py` and `analyze_expN.py` are real, runnable
-  scripts. `run_exp3.py` … `run_exp6.py` are still stubs.
-- 25 of 25 tests pass, including a real end-to-end SCALE-Sim smoke test.
+  `brute_force.py`, `convergence.py`, `common/simulator_interface.py`'s
+  `combine_simulation_results`, `common/baselines/static_heuristics.py`'s
+  `evaluate_all_baselines` are real, tested implementations now.
+  `common/plotting/figures.py`'s `plot_convergence_curves`,
+  `plot_utilization_vs_array_size`, `plot_utilization_heatmap`, and
+  `plot_pct_improvement_bars` are real; the rest of that file remains stubbed
+  until the experiment that needs each figure is reached.
+- `experiments/exp{0,1,2,3}_*/run_expN.py` and `analyze_expN.py` are real, runnable
+  scripts. `run_exp4.py` … `run_exp6.py` are still stubs.
+- 33 of 33 tests pass, including a real end-to-end SCALE-Sim smoke test.
 
-Phase B continues with Experiment 2 (search/training convergence, using the now-
-selected `bayesian_opt`) — independent of Exp 1's outcome — then 3 → 4/5 → 6,
-updating `RESULTS_TRACKER.md` after each. Re-running Experiment 1 at a larger,
-more representative workload scale is flagged as follow-up work, not scheduled yet.
+Phase B continues with Experiments 4 (scalability) and 5 (ablation) — both
+directly informed by Experiment 3's action-space finding above — then 6.
+Extending `common/optimizers/environment.py`'s action space to support
+per-stage dataflow choice is flagged as important, concrete follow-up work
+(see `exp3_stats.md` §8), not yet scheduled. Re-running Experiment 1 at a
+larger, more representative workload scale is also flagged as follow-up work.
 
 ## Setup
 
@@ -119,7 +139,7 @@ more representative workload scale is flagged as follow-up work, not scheduled y
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 docker build -t scalesim:latest -f docker/scalesim/Dockerfile docker/scalesim/
-pytest tests/   # 25 passed (requires Docker running for the smoke test's simulator stage)
+pytest tests/   # 33 passed (requires Docker running for the smoke test's simulator stage)
 ```
 
 SCALE-Sim itself runs containerized (Docker) — see `docs/CODING_AGENT_PLAN.md` §2.

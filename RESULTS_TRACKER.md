@@ -39,7 +39,7 @@ A2C in its place (documented in `common/optimizers/a2c.py`).
 | 0 | Optimizer bake-off | 🟢 Complete | 2026-08-31 | Bayesian opt (optuna TPE) selected — smallest distance from ground truth (1.06), fastest convergence (0.6 iters), lowest variance (std 0.83) | [exp0_stats.md](experiments/exp0_optimizer_bakeoff/exp0_stats.md) |
 | 1 | Array-size sensitivity | 🟢 Complete | 2026-09-01 | 16×16/32×32 justified mechanistically: the utilization "knee" tracks `head_dim`, not `seq_len` — a stated prediction (doubling head_dim 32→64 shifts the knee one array-size doubling higher) confirmed by a dedicated run (see [Justified array sizes](#justified-array-sizes) below) | [exp1_stats.md](experiments/exp1_array_sensitivity/exp1_stats.md) |
 | 2 | Search/training convergence | 🟢 Complete | 2026-09-01 | 5/5 seeds converged (mean iter 4.00, std 0.00) by a pre-stated criterion; a 10× stricter ε changed nothing — a structural criterion limitation (early-trial clustering), not a tuning gap. Exp 3 uses fixed budgets, not early-stopping, as a result | [exp2_stats.md](experiments/exp2_convergence/exp2_stats.md) |
-| 3 | Main sweep vs. baselines | 🔴 Not started | — | — | [exp3_stats.md](experiments/exp3_main_sweep/exp3_stats.md) |
+| 3 | Main sweep vs. baselines | 🟢 Complete | 2026-09-01 | `bayesian_opt` loses to `best_fixed_per_stage` significantly in all 4 cells (−1.9% to −9.1%) but beats the best single-dataflow baseline significantly in all 4 (+0.2% to +0.8%) — a real action-space asymmetry, not a search failure: the optimizer can't express per-stage dataflow choice (see §8 of the report) | [exp3_stats.md](experiments/exp3_main_sweep/exp3_stats.md) |
 | 4 | Scalability study | 🔴 Not started | — | — | [exp4_stats.md](experiments/exp4_scalability/exp4_stats.md) |
 | 5 | Ablation study | 🔴 Not started | — | — | [exp5_stats.md](experiments/exp5_ablation/exp5_stats.md) |
 | 6 | Generalization test (stretch) | 🔴 Not started | — | — | [exp6_stats.md](experiments/exp6_generalization/exp6_stats.md) |
@@ -106,11 +106,13 @@ new interpretation here that isn't already in the source report.
 - **[DECISION, adopted]** Given this, Experiment 3 does not use this criterion to dynamically early-stop optimizer runs — every seed runs a fixed, real-timed budget, and `convergence_iteration` (now shared via `common.optimizers.convergence`) is reported per seed as a descriptive statistic only. Full detail: `exp2_stats.md` §8a.
 
 ### Experiment 3 — Main sweep vs. baselines
-**Status:** 🔴 Not started
+**Status:** 🟢 Complete (2026-09-01)
 
-- **[RESULT]** —
-- **[INTERPRETATION]** —
-- **[LIMITATION]** —
+- **[RESULT]** `bayesian_opt` loses to `best_overall` (always `best_fixed_per_stage`) significantly in all 4 cells (−1.88% to −9.14%, all p<0.0001 by t-test).
+- **[RESULT]** `bayesian_opt` beats `best_single_dataflow` (always `os_only`) significantly in all 4 cells by t-test (+0.23% to +0.79%, all p<0.05) — though only 2/4 survive a conservative Bonferroni correction.
+- **[INTERPRETATION] — central finding, not a footnote.** Explained by a genuine action-space asymmetry, not a search failure: `common/optimizers/environment.py` applies one dataflow to the WHOLE workload per run (SCALE-Sim's Dataflow setting is per-run, not per-layer), while `best_fixed_per_stage` achieves its edge by running 3 separate simulations (one per GEMM stage) and combining them — a capability the learned optimizer's action space doesn't have. The optimizer reaches slightly above its true ceiling's raw baseline (`os_only`) in every cell, which is exactly what its SRAM-partition search should buy it.
+- **[LIMITATION → concrete follow-up work]** This is a real gap versus the thesis's "joint dataflow+tiling learning" claim — recommend extending the action space to a per-stage dataflow choice so the optimizer can compete with `best_fixed_per_stage` on equal footing. Directly relevant to how Experiment 5's ablation is scoped (even "joint" is currently capped at one global dataflow).
+- **[LIMITATION]** Grid reduced to seq_len∈{128,256} (real, measured infeasibility of 512/1024 at 16×16 — see [Justified array sizes](#justified-array-sizes)); 6-iteration optimizer budget; no multiple-comparisons correction applied by default (reported both ways).
 
 ### Experiment 4 — Scalability study
 **Status:** 🔴 Not started
@@ -147,4 +149,4 @@ whether anything failed.
 
 ---
 
-_Last updated: 2026-09-01 (Experiments 0, 1, and 2 complete; Exp 1's head_dim mechanism confirmed via a validation run with a falsifiable prediction that held; Experiments 3–6 not started)._
+_Last updated: 2026-09-01 (Experiments 0–3 complete; Exp 3 found a real action-space asymmetry — the optimizer beats fair single-dataflow baselines but loses to the per-stage-specialized best_fixed_per_stage, flagged as concrete follow-up work; Experiments 4–6 not started)._
