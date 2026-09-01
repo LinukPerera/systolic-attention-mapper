@@ -212,6 +212,19 @@ def plot_ablation_bars(df: pd.DataFrame, out_path: Path) -> None:
         ax.bar(x + i * width, sub["value_mean"], width, yerr=sub["value_ci"].fillna(0),
                label=variant, color=variant_colors[variant], capsize=4)
 
+    # Zoomed y-axis: these variants are typically within a fraction of a percentage
+    # point of each other (the ablation's whole point is to isolate a small effect),
+    # so a 0-100% axis would render every bar as visually identical. Explicitly
+    # labeled as zoomed (not silently misleading) since it does not start at 0 —
+    # exact values belong in the accompanying table, this figure is for relative
+    # comparison only.
+    data_min = (df["value_mean"] - df["value_ci"].fillna(0)).min()
+    data_max = (df["value_mean"] + df["value_ci"].fillna(0)).max()
+    pad = max((data_max - data_min) * 0.5, 0.5)
+    ax.set_ylim(max(0, data_min - pad), data_max + pad)
+    ax.text(0.01, 0.99, "y-axis zoomed to the data range (not from 0) — exact values in the accompanying table",
+            transform=ax.transAxes, fontsize=8, va="top", ha="left", style="italic", alpha=0.7)
+
     ax.set_xticks(x + width * (len(variants) - 1) / 2)
     ax.set_xticklabels(cells)
     ax.set_ylabel("PE utilization (%)")
