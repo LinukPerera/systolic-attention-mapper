@@ -57,7 +57,7 @@ only the physical folder layout changed.
 
 ## Status
 
-**Phase A — Stage 0 build-out: done.** **Phase B: Experiments 0–3 complete, 2026-09-01.**
+**Phase A — Stage 0 build-out: done.** **Phase B: Experiments 0–5 complete, 2026-09-01.**
 See `RESULTS_TRACKER.md` for the live rollup.
 
 - Repo is a git repository (`git init` done; see Setup below for identity note).
@@ -114,24 +114,48 @@ See `RESULTS_TRACKER.md` for the live rollup.
   and Experiment 5's ablation design. Full analysis, with both t-test and
   Wilcoxon significance and multiple-comparisons disclosure, in
   `experiments/exp3_main_sweep/exp3_stats.md`.
+- **Experiment 4 (scalability, answers RQ3) is complete**: extended Experiment 3's
+  grid by one real point (seq_len=512 @ 32×32 — the plan's example up to 8192 is
+  infeasible here; seq_len=1024 fails even at 32×32, real measured ceiling) and
+  merged it with Experiment 3's 4 existing points (reused, not re-simulated —
+  `bayesian_opt` is deterministic given its inputs). **The optimizer's advantage
+  over the best baseline shrinks and reverses at seq_len=512** (+0.2–0.8% →
+  −1.64%) because the fixed small budget doesn't reliably find the relocated
+  optimum (the best static dataflow itself changes at this scale, `os_only` →
+  `ws_only`) — one of five seeds missed it. Cost grows substantially with
+  `seq_len` and grows *faster* on 16×16 than 32×32, consistent with Experiment 1's
+  finding that smaller arrays are more expensive to simulate. Full analysis in
+  `experiments/exp4_scalability/exp4_stats.md`.
+- **Experiment 5 (ablation) is complete**: isolates `dataflow_only` vs.
+  `tiling_only` vs. `joint` (`bayesian_opt`, reused from Experiment 3) on 2
+  representative cells. **`dataflow_only` captures exactly 0% of the joint
+  optimizer's gain over the best static baseline** (deterministic — it always
+  rediscovers the same already-known best dataflow); **`tiling_only` alone
+  statistically matches `joint`** (paired test not significant, p=0.32–0.62) —
+  meaning the optimizer's real value, at this budget and action space, comes
+  entirely from the tiling (SRAM-partition) search, not from jointly learning
+  dataflow too. This directly qualifies Experiment 3's headline claim. Full
+  analysis in `experiments/exp5_ablation/exp5_stats.md`.
 - `common/optimizers/{ppo,evolutionary,bayesian_opt}.py`, `a2c.py`, `environment.py`,
-  `brute_force.py`, `convergence.py`, `common/simulator_interface.py`'s
-  `combine_simulation_results`, `common/baselines/static_heuristics.py`'s
-  `evaluate_all_baselines` are real, tested implementations now.
-  `common/plotting/figures.py`'s `plot_convergence_curves`,
-  `plot_utilization_vs_array_size`, `plot_utilization_heatmap`, and
-  `plot_pct_improvement_bars` are real; the rest of that file remains stubbed
-  until the experiment that needs each figure is reached.
-- `experiments/exp{0,1,2,3}_*/run_expN.py` and `analyze_expN.py` are real, runnable
-  scripts. `run_exp4.py` … `run_exp6.py` are still stubs.
+  `brute_force.py`, `convergence.py`, `ablation.py`,
+  `common/simulator_interface.py`'s `combine_simulation_results`,
+  `common/baselines/static_heuristics.py`'s `evaluate_all_baselines` are real,
+  tested implementations now. `common/plotting/figures.py`'s
+  `plot_convergence_curves`, `plot_utilization_vs_array_size`,
+  `plot_utilization_heatmap`, `plot_pct_improvement_bars`,
+  `plot_scalability_panels`, and `plot_ablation_bars` are all real now — every
+  figure function the plan lists is implemented.
+- `experiments/exp{0,1,2,3,4,5}_*/run_expN.py` and `analyze_expN.py` are real,
+  runnable scripts. Only `run_exp6.py` (optional/stretch) remains a stub.
 - 33 of 33 tests pass, including a real end-to-end SCALE-Sim smoke test.
 
-Phase B continues with Experiments 4 (scalability) and 5 (ablation) — both
-directly informed by Experiment 3's action-space finding above — then 6.
-Extending `common/optimizers/environment.py`'s action space to support
-per-stage dataflow choice is flagged as important, concrete follow-up work
-(see `exp3_stats.md` §8), not yet scheduled. Re-running Experiment 1 at a
-larger, more representative workload scale is also flagged as follow-up work.
+**Three experiments now independently point at the same concrete follow-up**:
+extending `common/optimizers/environment.py`'s action space to support per-stage
+dataflow choice (Experiment 3's finding) and re-testing with a larger iteration
+budget (Experiments 4/5's findings) — flagged clearly, not yet scheduled.
+Experiment 6 (generalization, optional/stretch per the plan) is the only
+experiment left; re-running Experiment 1 at a larger, more representative
+workload scale remains flagged as separate follow-up work too.
 
 ## Setup
 

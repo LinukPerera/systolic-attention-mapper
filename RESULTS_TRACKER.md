@@ -41,7 +41,7 @@ A2C in its place (documented in `common/optimizers/a2c.py`).
 | 2 | Search/training convergence | 🟢 Complete | 2026-09-01 | 5/5 seeds converged (mean iter 4.00, std 0.00) by a pre-stated criterion; a 10× stricter ε changed nothing — a structural criterion limitation (early-trial clustering), not a tuning gap. Exp 3 uses fixed budgets, not early-stopping, as a result | [exp2_stats.md](experiments/exp2_convergence/exp2_stats.md) |
 | 3 | Main sweep vs. baselines | 🟢 Complete | 2026-09-01 | `bayesian_opt` loses to `best_fixed_per_stage` significantly in all 4 cells (−1.9% to −9.1%) but beats the best single-dataflow baseline significantly in all 4 (+0.2% to +0.8%) — a real action-space asymmetry, not a search failure: the optimizer can't express per-stage dataflow choice (see §8 of the report) | [exp3_stats.md](experiments/exp3_main_sweep/exp3_stats.md) |
 | 4 | Scalability study | 🟢 Complete | 2026-09-01 | RQ3 answered: optimizer's advantage over best baseline shrinks and reverses at seq_len=512 (+0.2–0.8% → −1.6%, one seed missed the relocated optimum within the fixed 6-iter budget); cost grows substantially and faster on 16×16 than 32×32 | [exp4_stats.md](experiments/exp4_scalability/exp4_stats.md) |
-| 5 | Ablation study | 🔴 Not started | — | — | [exp5_stats.md](experiments/exp5_ablation/exp5_stats.md) |
+| 5 | Ablation study | 🟢 Complete | 2026-09-01 | `dataflow_only` captures 0% of the joint optimizer's gain over best-static (deterministic); `tiling_only` alone statistically matches `joint` (paired test not significant, p=0.32–0.62) — the thesis's real gain is attributable to tiling search, not joint learning, at this budget/action-space | [exp5_stats.md](experiments/exp5_ablation/exp5_stats.md) |
 | 6 | Generalization test (stretch) | 🔴 Not started | — | — | [exp6_stats.md](experiments/exp6_generalization/exp6_stats.md) |
 
 Status legend: 🔴 Not started · 🟡 In progress · 🟢 Complete (stats.md finalized) · ⚫ Failed/blocked (see notes)
@@ -124,11 +124,12 @@ new interpretation here that isn't already in the source report.
 - **[LIMITATION]** One point at the new scale, one array size; a budget-sensitivity re-run (larger iteration budget at seq_len=512) is the natural, falsifiable follow-up — flagged, not run.
 
 ### Experiment 5 — Ablation study
-**Status:** 🔴 Not started
+**Status:** 🟢 Complete (2026-09-01)
 
-- **[RESULT]** —
-- **[INTERPRETATION]** —
-- **[LIMITATION]** —
+- **[RESULT]** `dataflow_only` captures exactly 0% of `joint`'s gain over the best static baseline in both tested cells, deterministically (zero variance across 5 seeds — a 3-option categorical space is reliably fully explored in 6 trials).
+- **[RESULT]** `tiling_only`'s mean gain exceeds `joint`'s (117.2%, 116.7% "of joint's gain") but the difference is **not statistically significant** (paired t-test p=0.616, p=0.320; Wilcoxon p=0.875, p=0.375).
+- **[INTERPRETATION]** Essentially all of the joint optimizer's real gain over best-static is attributable to the tiling (SRAM-partition) search — dataflow search adds no measurable value once the best static dataflow is known, and there is no evidence joint search outperforms tiling-only at this budget/action-space. Directly qualifies Experiment 3's finding: the optimizer's advantage comes from tiling, not from discovering a better dataflow than the static heuristics already found.
+- **[LIMITATION]** Only 2 of Experiment 3's 4 cells tested, both where `os_only` is best-static; untested whether `dataflow_only` still contributes 0% at Experiment 4's seq_len=512 point, where the best static dataflow itself changes to `ws_only` — flagged as a natural, informative follow-up, along with re-running once the action space supports per-stage dataflow choice (Experiment 3's own recommended fix).
 
 ### Experiment 6 — Generalization test (optional/stretch)
 **Status:** 🔴 Not started
@@ -151,4 +152,4 @@ whether anything failed.
 
 ---
 
-_Last updated: 2026-09-01 (Experiments 0–3 complete; Exp 3 found a real action-space asymmetry — the optimizer beats fair single-dataflow baselines but loses to the per-stage-specialized best_fixed_per_stage, flagged as concrete follow-up work; Experiments 4–6 not started)._
+_Last updated: 2026-09-01 (Experiments 0–5 complete. Exp 3 found a real action-space asymmetry (optimizer beats fair single-dataflow baselines, loses to per-stage-specialized best_fixed_per_stage); Exp 4 answered RQ3 (advantage shrinks/reverses and cost grows as seq_len scales, under the fixed small budget); Exp 5 found the optimizer's real gain is attributable to tiling search alone, not joint dataflow+tiling learning, at this budget/action-space — all three findings point at the same concrete follow-up (extend the action space to per-stage dataflow, and re-test with a larger budget). Experiment 6 (optional/stretch) not started)._
