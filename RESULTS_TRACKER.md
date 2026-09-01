@@ -36,7 +36,7 @@ A2C in its place (documented in `common/optimizers/a2c.py`).
 
 | # | Experiment | Status | Date run | Headline result | Report |
 |---|---|---|---|---|---|
-| 0 | Optimizer bake-off | 🟢 Complete | 2026-08-31 | Bayesian opt (optuna TPE) selected — smallest distance from ground truth (1.06), fastest convergence (0.6 iters), lowest variance (std 0.83) | [exp0_stats.md](experiments/exp0_optimizer_bakeoff/exp0_stats.md) |
+| 0 | Optimizer bake-off | 🟢 Complete | 2026-08-31 (re-examined 2026-09-02) | **Re-examined on the per-stage action space; selection changed to A2C.** On the new 9-dim action space, `bayesian_opt` had the *worst* mean final reward of the 4 candidates (reversed from the original 3-dim finding); `a2c`/`ppo` now tie for best. See `exp0_stats.md` §11 | [exp0_stats.md](experiments/exp0_optimizer_bakeoff/exp0_stats.md) |
 | 1 | Array-size sensitivity | 🟢 Complete | 2026-09-01 | 16×16/32×32 justified mechanistically: the utilization "knee" tracks `head_dim`, not `seq_len` — a stated prediction (doubling head_dim 32→64 shifts the knee one array-size doubling higher) confirmed by a dedicated run (see [Justified array sizes](#justified-array-sizes) below) | [exp1_stats.md](experiments/exp1_array_sensitivity/exp1_stats.md) |
 | 2 | Search/training convergence | 🟢 Complete | 2026-09-01 | 5/5 seeds converged (mean iter 4.00, std 0.00) by a pre-stated criterion; a 10× stricter ε changed nothing — a structural criterion limitation (early-trial clustering), not a tuning gap. Exp 3 uses fixed budgets, not early-stopping, as a result | [exp2_stats.md](experiments/exp2_convergence/exp2_stats.md) |
 | 3 | Main sweep vs. baselines | 🟢 Complete | 2026-09-01 | `bayesian_opt` loses to `best_fixed_per_stage` significantly in all 4 cells (−1.9% to −9.1%) but beats the best single-dataflow baseline significantly in all 4 (+0.2% to +0.8%) — a real action-space asymmetry, not a search failure: the optimizer can't express per-stage dataflow choice (see §8 of the report) | [exp3_stats.md](experiments/exp3_main_sweep/exp3_stats.md) |
@@ -48,12 +48,17 @@ Status legend: 🔴 Not started · 🟡 In progress · 🟢 Complete (stats.md f
 
 ---
 
+## Per-stage action space
+
+Set 2026-09-02, per `docs/NEXT_INSTRUCTIONS.md` item 1 — `common/optimizers/environment.py`'s `AttentionMappingProblem.evaluate()` was rewritten to apply one `(dataflow_mode, SRAM-split)` choice **per GEMM stage** (`qkv_projection`, `qk_transpose`, `score_times_v`) instead of one global choice for the whole workload, matching the granularity `common.baselines.static_heuristics.best_fixed_per_stage_mapping` already used. Real cause of Experiment 3/5's central findings below (optimizer structurally couldn't express or compete with a per-stage baseline). Every optimizer's search space widened from 3 to 9 real values (`decode_raw_action`); `evaluate()` now runs 3 real simulator calls per candidate instead of 1. Full detail, including the new `brute_force.py` per-stage-independent grid-search design (and its [LIMITATION] as an approximation, not a guaranteed global optimum) in the commit message and `common/optimizers/environment.py`'s module docstring. This is why Experiment 0's selection was re-examined (below) and why Experiments 3–5 are being re-run (see `docs/NEXT_INSTRUCTIONS.md`).
+
 ## Selected optimizer
 
-`config/optimizers/selected.yaml` — set by Experiment 0, 2026-08-31.
+`config/optimizers/selected.yaml` — set by Experiment 0, 2026-08-31; **changed 2026-09-02** after the optimizer action space was extended to per-stage dataflow (see [Per-stage action space](#per-stage-action-space) below).
 
-- **Winner:** `bayesian_opt` (optuna TPE sampler)
-- **Reason:** Across 5 seeds on the exp0 pilot workload/16×16 array, smallest mean distance from the brute-force ground-truth best reward (1.06, vs. 2.08 for a2c/ppo, 3.70 for evolutionary), fastest convergence (mean 0.6 iterations to within 5% of ground truth, vs. 5.2 for a2c/ppo), and lowest variance in final reward (std 0.83, vs. evolutionary's 2.56). All 5 seeds converged. See `exp0_stats.md` §4/§8 for the full table and caveats (small pilot scale, no significance test at n=5 — flagged as limitations, not hidden).
+- **Winner:** `a2c` (was `bayesian_opt`, 2026-08-31–2026-09-02)
+- **Reason:** On the new 9-dim per-stage action space, a re-run of the same 5-seed/15-iteration pilot bake-off found `bayesian_opt` no longer competitive — worst mean final reward (77.32) of the 4 candidates, fewest converged seeds (3/5), slowest convergence (mean 8.0 iters). A real follow-up test lowering optuna's `n_startup_trials` (default 10, plausible mechanism: fewer random-startup samples cover a 3-dim space much better than a 9-dim one within the same budget) partially recovered performance (77.72) but did not close the gap with `a2c`/`ppo` (78.39–78.40) — the reversal isn't fully a hyperparameter artifact. `a2c` and `ppo` are statistically indistinguishable at n=5; `a2c` is chosen as the plan's originally-intended primary method (before the REINFORCE→A2C substitution), not because any measured axis favors it over `ppo`. See `exp0_stats.md` §11 for the full data, the `n_startup_trials` test, and caveats (same small-pilot-scale limitations as the original selection).
+- **Original (2026-08-31, now superseded) reason, kept for history:** Across 5 seeds on the 3-dim action space, `bayesian_opt` had smallest mean distance from the brute-force ground-truth best reward (1.06, vs. 2.08 for a2c/ppo, 3.70 for evolutionary), fastest convergence (mean 0.6 iterations to within 5% of ground truth, vs. 5.2 for a2c/ppo), and lowest variance in final reward (std 0.83, vs. evolutionary's 2.56). See `exp0_stats.md` §4/§8 for that data.
 
 ## Justified array sizes
 
@@ -77,13 +82,22 @@ Copy tagged claims verbatim from that file's §8 (Interpretation); do not add
 new interpretation here that isn't already in the source report.
 
 ### Experiment 0 — Optimizer bake-off
-**Status:** 🟢 Complete (2026-08-31)
+**Status:** 🟢 Complete (2026-08-31; re-examined on the per-stage action space 2026-09-02, selection changed)
 
+**Original (3-dim action space) run, 2026-08-31:**
 - **[RESULT]** Across 5 seeds, `bayesian_opt` (optuna TPE) had the smallest mean distance from the brute-force ground-truth best reward (1.06), the fastest mean convergence to within 5% of that ground truth (0.60 iterations), the lowest final-reward standard deviation (0.83), and 5/5 seeds converging.
 - **[RESULT]** `a2c` and `ppo` produced near-identical final-reward distributions (66.68 ± 0.61 for both).
 - **[RESULT]** `evolutionary` had the worst mean final reward (65.06), the highest variance (std 2.56), and one non-converged seed.
 - **[INTERPRETATION]** `a2c`/`ppo`'s near-identical trajectories reflect this experiment's very small iteration budget (15 evals/seed) dominating both algorithms' behavior with near-random early exploration — not evidence the two methods are equivalent in general.
 - **[LIMITATION]** Pilot workload was reduced 5–15x below the plan's example scale, and evaluation budgets were small, specifically to finish in one session (real per-evaluation cost at the plan's literal scale was measured at ~178s — see `exp0_stats.md` §3). No significance test was run at n=5 seeds. Both are real, disclosed scope limits, not hidden ones — full detail in `exp0_stats.md` §8–9.
+
+**Re-run on the per-stage action space (9-dim, see [Per-stage action space](#per-stage-action-space) above), 2026-09-02:**
+- **[RESULT]** `bayesian_opt` had the *worst* mean final reward (77.32) of the 4 candidates — reversed from the original finding above — the fewest converged seeds (3/5), and the slowest mean convergence among converged seeds (8.0 iterations).
+- **[RESULT]** `a2c` and `ppo` tied for best (78.391 ± 1.843 vs. 78.393 ± 1.841; per-seed values match to 2-3 decimal places for 3 of 5 seeds), both with full 5/5 convergence and lowest distance from the brute-force ground truth.
+- **[RESULT]** A real re-test lowering `bayesian_opt`'s `n_startup_trials` from optuna's default 10 to 5 (plausible mechanism: fewer random-startup samples cover a 9-dim space far worse than a 3-dim one within the same 15-trial budget) partially recovered performance (mean 77.72, vs. 77.32 at the default) but did not close the gap with `a2c`/`ppo`.
+- **[LIMITATION]** The brute-force "ground truth" used for this re-run is a per-stage-independent-EDP approximation, not a guaranteed global optimum (a true joint grid over 3 stages is combinatorially infeasible — ~27,000 real Docker calls). Real evidence this matters: `a2c`/`ppo` seed 1 both reached a real combined reward (80.4316) *above* the "ground truth" (79.4537).
+- **[DECISION]** Selection changed to `a2c` (`config/optimizers/selected.yaml`). `a2c`/`ppo` are tied on the data; `a2c` is chosen as the plan's originally-intended primary method, not because any measured axis favors it over `ppo`.
+- Full data, tables, and the `n_startup_trials` test: `exp0_stats.md` §11.
 
 ### Experiment 1 — Array-size sensitivity study
 **Status:** 🟢 Complete (2026-09-01, includes representative-scale and head_dim-validation re-runs)

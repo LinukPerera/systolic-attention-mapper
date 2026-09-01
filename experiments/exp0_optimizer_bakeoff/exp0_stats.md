@@ -123,3 +123,140 @@ python experiments/exp0_optimizer_bakeoff/analyze_exp0.py
 Note: `bayesian_opt` and the brute-force ground truth are deterministic given a seed / grid; `a2c`/`ppo` (stable-baselines3) and `evolutionary` (deap) may not reproduce bit-identically across machines/library-patch-versions even with the same seed, per those libraries' own reproducibility guarantees (or lack thereof) — the aggregate conclusions (§8) are the claim being made, not exact per-row numeric reproduction.
 
 **Acceptance criteria for this experiment (per the plan):** A single optimizer is selected with a documented, data-backed reason (§8 above); that choice is now recorded in `config/optimizers/selected.yaml` and referenced (not re-decided) by Experiments 2–6.
+
+---
+
+## 11. Per-stage action-space re-run (2026-09-02) — SUPERSEDES §8's selection
+
+`docs/NEXT_INSTRUCTIONS.md` item 2, after the optimizer action space was extended
+from one global `(dataflow_mode, SRAM-split)` to one per GEMM stage (9 real values,
+was 3 — see `common/optimizers/environment.py`'s module docstring): re-examine
+whether `bayesian_opt`'s selection (§8) still holds on the larger space, rather than
+silently carrying it forward. **It does not.** Everything in §1–10 above describes
+the *original* (3-dim action space) run and is left as-is, unmodified, per plan
+ground rule 6 ("nothing is deleted, only superseded") — this section is the new,
+authoritative selection.
+
+**Method:** identical procedure to §3, same pilot workload/hardware
+(`exp0_pilot.yaml`, `16x16.yaml`), same 5 seeds, same `n_iterations=15`,
+`sram_grid_divisions=3` — only the action space differs. Real per-`evaluate()`-call
+cost was re-timed first (per this project's standing discipline): **~2.8s/call**
+(vs. the original ~2.0s at 3-dim — evaluate() now runs 3 real per-stage simulator
+calls internally, but the extra 2 calls are on much smaller per-stage GEMMs, not a
+full 3x), well within a same-session budget for the full bake-off.
+
+```bash
+python experiments/exp0_optimizer_bakeoff/run_exp0.py \
+  --workload config/workloads/exp0_pilot.yaml --hardware config/hardware/16x16.yaml \
+  --seeds 0 1 2 3 4 --n-iterations 15 --sram-grid-divisions 3 \
+  --out results/raw/exp0_perstage.csv --out-stage-grid results/raw/exp0_perstage_brute_force_stage_grid.csv
+python experiments/exp0_optimizer_bakeoff/analyze_exp0.py \
+  --raw-csv results/raw/exp0_perstage.csv --out-prefix exp0_perstage
+```
+
+Raw data: `results/raw/exp0_perstage.csv` (268 rows, all `status=="OK"` — zero
+FAILED runs at this workload/hardware scale). Brute-force ground-truth's real
+per-stage grid evidence (90 single-stage candidates, evaluated independently per
+stage — see next paragraph) is in a **separate** file,
+`results/raw/exp0_perstage_brute_force_stage_grid.csv`, deliberately not mixed into
+`exp0_perstage.csv`'s `optimizer=="brute_force"` rows (see below).
+
+**[LIMITATION] Brute-force ground truth is now an approximation, not a guaranteed
+global optimum.** A true joint grid over all 3 stages together is combinatorially
+infeasible (~27,000 real Docker calls at `sram_grid_divisions=3` — see
+`common/optimizers/brute_force.py`'s module docstring). `brute_force_search` now
+grids each stage **independently** by lowest EDP (mirroring
+`best_fixed_per_stage_mapping`'s own approach), then combines the winners and gets
+one real combined reward via `problem.evaluate()`. **This run produced real
+evidence that the ground truth (79.4537) is not the true optimum**: `a2c`/`ppo`
+seed 1 both independently reached a real combined reward of **80.4316** — 0.98
+above the "ground truth." Not a bug: an EDP-minimizing per-stage choice is not
+provably reward-maximizing when stages interact through the combined result
+(`brute_force.py`'s module docstring flagged this possibility explicitly before
+this run).
+`analyze_exp0.py`'s `distance_from_brute_force_best` column can be negative for a
+future run for this reason — treat "ground truth" here as a strong reference point,
+not a provable upper bound, when reading any of this section's numbers.
+
+### 11a. Results
+
+n = 5 seeds per optimizer. `results/processed/exp0_perstage_summary.csv`.
+
+| Optimizer | n (seeds) | Converged seeds (≤5% of best) | Iters-to-converge (mean ± std) | Final best reward (mean ± std) | Final utilization % (mean ± std) | Mean wall-clock/eval (s) | Distance from brute-force best |
+|---|---|---|---|---|---|---|---|
+| a2c | 5 | 5/5 | 4.00 ± 5.20 | **78.391 ± 1.843** | 78.396 ± 1.843 | 2.14 | **1.063** |
+| ppo | 5 | 5/5 | 4.00 ± 5.20 | 78.393 ± 1.841 | 78.398 ± 1.841 | 2.10 | 1.061 |
+| evolutionary | 5 | 5/5 | 4.00 ± 1.41 | 77.470 ± 1.030 | 77.475 ± 1.029 | 1.95 | 1.984 |
+| bayesian_opt | 5 | 3/5 | 8.00 ± 4.36 | 77.318 ± 2.025 | 77.323 ± 2.024 | 1.94 | 2.135 |
+
+Brute-force ground truth (per-stage-independent-EDP approximation, see
+[LIMITATION] above): **79.4537** (combined reward), stages `qkv_projection=IS,
+qk_transpose=WS, score_times_v=OS`.
+
+Figure: `results/figures/exp0_perstage_convergence_curves.png` (+ `.svg`) — same
+plot as Fig. 1 (§7), new-action-space data.
+
+### 11b. `bayesian_opt`'s `n_startup_trials` follow-up test
+
+**Real, falsifiable check before finalizing a new selection** (not run
+speculatively after seeing an answer we liked): optuna's `TPESampler` defaults to
+`n_startup_trials=10` pure quasi-random trials before its surrogate model informs
+any sampling decision (`inspect.signature(TPESampler.__init__)`, verified). At
+`n_iterations=15`, that is the same 10/15 (67%) startup fraction in *both* the old
+3-dim and new 9-dim action space — but 10 random samples cover a 9-dim space far
+worse than a 3-dim one (curse of dimensionality), a plausible mechanism for the
+reversal above. `common/optimizers/bayesian_opt.py`'s `BayesianOptOptimizer` now
+takes `n_startup_trials` as a constructor kwarg (was hardcoded) specifically to
+test this.
+
+Real re-run, same 5 seeds/pilot workload, `n_startup_trials=5` (not logged to
+`exp0_perstage.csv` — this is a diagnostic probe, not part of the bake-off proper):
+
+| seed | best reward (n_startup_trials=5) |
+|---|---|
+| 0 | 78.964 |
+| 1 | 78.197 |
+| 2 | 77.918 |
+| 3 | 74.516 |
+| 4 | 79.008 |
+
+Mean 77.72 ± 1.85 (n=5) — a real improvement over the default's 77.32 ± 2.03, but
+**still below a2c/ppo's 78.39–78.40**, and still with one clear low-variance-outlier
+seed (74.52). **[INTERPRETATION]** The `n_startup_trials` mechanism has some real
+explanatory power (partial recovery) but does not fully account for the reversal —
+`bayesian_opt` on this action space/budget is not simply mis-tuned, it is genuinely
+less competitive here than `a2c`/`ppo`/`evolutionary`, at least at this small
+15-iteration pilot budget. A larger-budget re-test (more trials to amortize the
+startup cost) is flagged as real follow-up work, not run here (out of this item's
+scope — Experiments 3+ use a real per-experiment iteration budget, not this pilot's).
+
+### 11c. Interpretation
+
+- **[RESULT]** On the new action space, `bayesian_opt` has the **worst** mean final
+  reward (77.32) of the four candidates — the reverse of the original (3-dim)
+  finding (§8), where it had the best (67.70).
+- **[RESULT]** `a2c` and `ppo` are statistically indistinguishable (78.391 ± 1.843
+  vs. 78.393 ± 1.841; per-seed values match to 2-3 decimal places for 3 of 5 seeds
+  — `results/processed/exp0_perstage_per_seed.csv`) and have the best mean final
+  reward, lowest distance from ground truth, and full 5/5 convergence — the same
+  "near-identical under a small shared budget" phenomenon documented in §8 for the
+  original run, now on top instead of in the middle.
+- **[RESULT]** `evolutionary` (77.47) sits between `a2c`/`ppo` and `bayesian_opt`,
+  with 5/5 seeds converged (unlike the original run's 4/5) and the lowest std
+  (1.03) of any candidate.
+- **[INTERPRETATION]** §11b's `n_startup_trials` test shows the reversal is
+  partially, not fully, a fixable hyperparameter artifact — a genuine finding about
+  this optimizer/action-space/budget combination, not evidence of a bug in this
+  turn's action-space redesign (the redesign's own unit tests, `evaluate()`'s
+  per-stage call count/combining logic, and the brute-force ground-truth's
+  independent real re-derivation all check out — see item 1's commit).
+- **[DECISION]** Selection changed from `bayesian_opt` to **`a2c`**
+  (`config/optimizers/selected.yaml`, updated 2026-09-02). `a2c`/`ppo` tie on every
+  measured axis; `a2c` is chosen as the plan's originally-intended primary method
+  (before the "REINFORCE has no SB3 implementation" substitution, `a2c.py`'s
+  docstring) — not because any measured axis favors it over `ppo`. Either would be
+  an equally defensible choice on this data alone.
+- **[LIMITATION]** Same small-pilot-scale caveats as §9 apply here unchanged (5-15x
+  below the plan's example workload scale, no significance test at n=5). This
+  selection is real and data-backed at this scale, same as the original one was —
+  not a stronger claim than that.

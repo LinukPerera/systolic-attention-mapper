@@ -69,6 +69,15 @@ See `RESULTS_TRACKER.md` for the live rollup.
   SCALE-Sim supports only **WS/OS/IS** dataflows (no RS/row-stationary, despite
   the plan's module comment); `stable-baselines3` has **no plain REINFORCE**
   (`common/optimizers/a2c.py` uses A2C in its place, documented there).
+- **The optimizer action space was extended to per-stage dataflow (2026-09-02)**,
+  directly in response to Experiment 3/5's central finding that the optimizer
+  structurally couldn't compete with (or express) `best_fixed_per_stage_mapping`'s
+  per-GEMM-stage choice. `AttentionMappingProblem.evaluate()` now runs one real
+  simulation per stage and combines them (`common/optimizers/environment.py`);
+  every optimizer's search space widened from 3 to 9 real values. Experiments 0
+  (selection re-examined, changed to `a2c`) and 3–5 (re-runs in progress) are
+  being updated against this new action space — see `RESULTS_TRACKER.md`'s
+  "Per-stage action space" section and `docs/NEXT_INSTRUCTIONS.md`.
 - **Experiment 0 (optimizer bake-off) is complete**, with real results from 350
   real containerized SCALE-Sim simulations (30 brute-force ground-truth evals + 4
   optimizers × 5 seeds × 15 evals each, zero FAILED runs). `bayesian_opt` (optuna
@@ -76,6 +85,11 @@ See `RESULTS_TRACKER.md` for the live rollup.
   `experiments/exp0_optimizer_bakeoff/exp0_stats.md` for the full analysis,
   including honestly-flagged limitations (pilot workload scale reduced from the
   plan's example for wall-clock reasons; no significance test at n=5 seeds).
+  **Re-examined 2026-09-02** after the action space below was extended to
+  per-stage dataflow: on the new 9-dim space, `bayesian_opt` was no longer
+  competitive (worst of the 4 candidates); selection **changed to `a2c`**
+  (tied with `ppo` on the data). See `exp0_stats.md` §11 and
+  `RESULTS_TRACKER.md`'s "Selected optimizer" section.
 - **Experiment 1 (array-size sensitivity) is complete**, now with three runs and a
   confirmed mechanistic finding: the utilization "knee" seen in a representative-
   scale re-run (seq_len=256, head_dim=32) tracks **`head_dim`**, not `seq_len` or
