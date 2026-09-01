@@ -35,8 +35,8 @@ from common import logging_utils
 from common.metrics import compute_edp
 from common.optimizers.a2c import A2COptimizer
 from common.optimizers.bayesian_opt import BayesianOptOptimizer
-from common.optimizers.brute_force import brute_force_search
-from common.optimizers.environment import AttentionMappingProblem, EvalResult
+from common.optimizers.brute_force import StageGridAttempt, brute_force_search
+from common.optimizers.environment import STAGE_NAMES, AttentionMappingProblem, EvalResult
 from common.optimizers.evolutionary import EvolutionaryOptimizer
 from common.optimizers.ppo import PPOOptimizer
 from common.simulator_interface import load_hardware_config
@@ -46,6 +46,12 @@ EXPERIMENT_ID = "exp0"
 THIS_DIR = Path(__file__).parent
 RESULTS_DIR = THIS_DIR / "results"
 RAW_CSV = RESULTS_DIR / "raw" / f"{EXPERIMENT_ID}.csv"
+# Real per-stage grid evidence from brute_force_search's stage_grid_attempts (see
+# that function's docstring) — logged separately from RAW_CSV/exp0.csv since these
+# rows' rewards are single-stage-only, NOT comparable to the combined ground-truth
+# reward analyze_exp0.py's max()-based logic reads from exp0.csv's "brute_force"
+# rows. Kept as evidence (ground rule 1) without risking corrupting that logic.
+STAGE_GRID_CSV = RESULTS_DIR / "raw" / f"{EXPERIMENT_ID}_brute_force_stage_grid.csv"
 
 OPTIMIZER_YAML_DIR = _PROJECT_ROOT / "config" / "optimizers"
 
@@ -69,26 +75,73 @@ def _log_eval_result(
 ) -> None:
     """Append one EvalResult as one raw CSV row, per CODING_AGENT_PLAN.md §4's schema.
 
-    The actual SRAM partition fractions searched (ifmap/filter/ofmap_frac) aren't
-    columns in the fixed schema -- they're recorded in `notes` (machine-parseable
-    JSON) rather than dropped, so every action's full detail stays traceable back
-    from the CSV (plan §3: no silent loss of information).
+    **Per-stage, revised 2026-09-02** (was one global dataflow_mode/SRAM-fracs --
+    see common.optimizers.environment's module docstring). `dataflow_mode` (a flat,
+    required RAW_COLUMNS column shared by every experiment's CSV -- not something
+    this script can unilaterally restructure) is populated with a compact
+    "-".join(...) summary of all STAGE_NAMES' dataflow modes, in STAGE_NAMES order
+    (e.g. "WS-OS-IS"). The full per-stage detail (dataflow mode + all 3 SRAM
+    fractions, per stage) is recorded in `notes` (machine-parseable JSON) rather
+    than dropped, so every action's full detail stays traceable back from the CSV
+    (plan §3: no silent loss of information).
     """
     sim = eval_result.simulation
     action = eval_result.action
-    notes = json.dumps({
-        "ifmap_frac": round(action.ifmap_frac, 4), "filter_frac": round(action.filter_frac, 4),
-        "ofmap_frac": round(action.ofmap_frac, 4), "reward": round(eval_result.reward, 6),
-        "sim_notes": sim.notes,
-    })
+    per_stage = {
+        name: {
+            "dataflow_mode": sa.dataflow_mode,
+            "ifmap_frac": round(sa.ifmap_frac, 4),
+            "filter_frac": round(sa.filter_frac, 4),
+            "ofmap_frac": round(sa.ofmap_frac, 4),
+        }
+        for name, sa in action.stages.items()
+    }
+    dataflow_summary = "-".join(action.stages[name].dataflow_mode for name in STAGE_NAMES)
+    notes = json.dumps({"stages": per_stage, "reward": round(eval_result.reward, 6), "sim_notes": sim.notes})
     row = {
         "run_id": f"{experiment}-{optimizer}-seed{seed}-iter{iteration}",
         "experiment": experiment, "timestamp": datetime.now(timezone.utc).isoformat(),
         "git_commit": git_commit, "optimizer": optimizer,
         "array_rows": hardware.array_rows, "array_cols": hardware.array_cols,
-        "sram_kb": sum(hardware.sram_kb.values()), "dataflow_mode": action.dataflow_mode,
+        "sram_kb": sum(hardware.sram_kb.values()), "dataflow_mode": dataflow_summary,
         "seq_len": workload.seq_len, "hidden_dim": workload.hidden_dim, "num_heads": workload.num_heads,
         "seed": seed, "iteration": iteration,
+        "pe_utilization_pct": sim.pe_utilization_pct if sim.status == "OK" else None,
+        "exec_cycles": sim.exec_cycles if sim.status == "OK" else None,
+        "sram_dram_traffic_bytes": sim.sram_dram_traffic_bytes if sim.status == "OK" else None,
+        "edp": compute_edp(sim, energy_per_cycle_pj=hardware.energy_per_cycle_pj) if sim.status == "OK" else None,
+        "wall_clock_s": sim.wall_clock_s, "status": sim.status, "notes": notes,
+    }
+    logging_utils.append_run_row(csv_path, row)
+
+
+def _log_stage_grid_attempt(
+    *, csv_path: Path, experiment: str, git_commit: str, hardware, workload,
+    iteration: int, attempt: StageGridAttempt,
+) -> None:
+    """Append one brute_force_search stage_grid_attempts entry as one raw CSV row.
+
+    Logged under optimizer="brute_force_stage_grid" to STAGE_GRID_CSV (a separate
+    file from RAW_CSV/exp0.csv) -- see module-level STAGE_GRID_CSV comment for why:
+    this row's pe_utilization_pct/reward are single-stage-only, not the combined
+    figure every other row in exp0.csv represents, and analyze_exp0.py's ground-
+    truth-max logic must never see these mixed in with "brute_force" rows.
+    """
+    sim = attempt.result
+    sa = attempt.stage_action
+    notes = json.dumps({
+        "stage_name": attempt.stage_name, "ifmap_frac": round(sa.ifmap_frac, 4),
+        "filter_frac": round(sa.filter_frac, 4), "ofmap_frac": round(sa.ofmap_frac, 4),
+        "sim_notes": sim.notes,
+    })
+    row = {
+        "run_id": f"{experiment}-brute_force_stage_grid-{attempt.stage_name}-iter{iteration}",
+        "experiment": experiment, "timestamp": datetime.now(timezone.utc).isoformat(),
+        "git_commit": git_commit, "optimizer": "brute_force_stage_grid",
+        "array_rows": hardware.array_rows, "array_cols": hardware.array_cols,
+        "sram_kb": sum(hardware.sram_kb.values()), "dataflow_mode": sa.dataflow_mode,
+        "seq_len": workload.seq_len, "hidden_dim": workload.hidden_dim, "num_heads": workload.num_heads,
+        "seed": -1, "iteration": iteration,
         "pe_utilization_pct": sim.pe_utilization_pct if sim.status == "OK" else None,
         "exec_cycles": sim.exec_cycles if sim.status == "OK" else None,
         "sram_dram_traffic_bytes": sim.sram_dram_traffic_bytes if sim.status == "OK" else None,
@@ -106,6 +159,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--n-iterations", type=int, default=15, help="Iteration budget per optimizer per seed.")
     parser.add_argument("--sram-grid-divisions", type=int, default=3, help="Brute-force ground-truth grid coarseness.")
     parser.add_argument("--out", type=str, default=str(RAW_CSV))
+    parser.add_argument("--out-stage-grid", type=str, default=str(STAGE_GRID_CSV))
     return parser.parse_args()
 
 
@@ -114,6 +168,7 @@ def main() -> None:
     workload = load_workload_yaml(str(_PROJECT_ROOT / args.workload) if not Path(args.workload).is_absolute() else args.workload)
     hardware = load_hardware_config(str(_PROJECT_ROOT / args.hardware) if not Path(args.hardware).is_absolute() else args.hardware)
     csv_path = Path(args.out)
+    stage_grid_csv_path = Path(args.out_stage_grid)
     git_commit = logging_utils.current_git_commit(_PROJECT_ROOT)
 
     scratch_root = RESULTS_DIR / "raw" / "_scratch"
@@ -124,15 +179,25 @@ def main() -> None:
         workload, hardware, traffic_penalty_weight=0.01, failed_run_penalty_reward=-1000.0,
         scratch_dir=scratch_root / "brute_force",
     )
-    bf_results = brute_force_search(bf_problem, sram_grid_divisions=args.sram_grid_divisions)
-    for i, r in enumerate(bf_results):
+    bf_result = brute_force_search(bf_problem, sram_grid_divisions=args.sram_grid_divisions)
+    for i, attempt in enumerate(bf_result.stage_grid_attempts):
+        _log_stage_grid_attempt(
+            csv_path=stage_grid_csv_path, experiment=EXPERIMENT_ID, git_commit=git_commit,
+            hardware=hardware, workload=workload, iteration=i, attempt=attempt,
+        )
+    if bf_result.best is not None:
         _log_eval_result(
             csv_path=csv_path, experiment=EXPERIMENT_ID, git_commit=git_commit, optimizer="brute_force",
-            hardware=hardware, workload=workload, seed=-1, iteration=i, eval_result=r,
+            hardware=hardware, workload=workload, seed=-1, iteration=0, eval_result=bf_result.best,
         )
-    best_bf = max(bf_results, key=lambda r: r.reward)
-    print(f"[exp0] brute-force: {len(bf_results)} evals, best reward={best_bf.reward:.3f} "
-          f"(dataflow={best_bf.action.dataflow_mode})")
+        dataflow_summary = "-".join(bf_result.best.action.stages[name].dataflow_mode for name in STAGE_NAMES)
+        print(f"[exp0] brute-force: {len(bf_result.stage_grid_attempts)} stage-grid evals "
+              f"(logged to {stage_grid_csv_path}), best combined reward={bf_result.best.reward:.3f} "
+              f"(dataflow={dataflow_summary})")
+    else:
+        print(f"[exp0] WARNING: brute-force found no successful per-stage winner for at least one "
+              f"stage -- no ground-truth row logged to {csv_path}. Real per-candidate evidence is in "
+              f"{stage_grid_csv_path}. analyze_exp0.py will raise until this is investigated.")
 
     # --- Each candidate optimizer, each seed ---
     for opt_name, builder in OPTIMIZER_BUILDERS.items():

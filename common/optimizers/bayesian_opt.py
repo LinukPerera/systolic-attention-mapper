@@ -15,6 +15,18 @@ module docstring.)
 Objective: each trial's real EvalResult.reward, from one real problem.evaluate()
 call — optuna's TPE sampler fits its surrogate model to these real rewards, it
 never sees or optimizes a synthetic stand-in.
+
+**n_startup_trials, added 2026-09-02**: optuna's TPESampler defaults to 10 pure
+quasi-random trials before its surrogate model informs any sampling decision
+(verified via `inspect.signature(TPESampler.__init__)`). At `_ACTION_DIM` now 9
+(was 3, before the per-stage action space), a 9-dimensional space needs
+substantially more random coverage than a 3-dimensional one to give TPE's
+surrogate a useful fit within the same 10-trial startup budget (curse of
+dimensionality) — a real, plausible mechanism for Experiment 0's per-stage-action-
+space re-run finding `bayesian_opt` no longer the strongest candidate at a 15-trial
+budget (`exp0_stats.md` §11). Exposed as a constructor kwarg (config/optimizers/
+bayesian_opt.yaml is the place to set it) rather than hardcoded, so this can be
+tuned and re-tested empirically instead of assumed.
 """
 from __future__ import annotations
 
@@ -31,6 +43,17 @@ _ACTION_DIM = 3 * len(STAGE_NAMES)
 class BayesianOptOptimizer(DataflowTilingOptimizer):
     """Bayesian-optimization candidate (TPE sampler)."""
 
+    def __init__(self, *, n_startup_trials: int = 10) -> None:
+        """
+        Args:
+            n_startup_trials: Passed through to optuna.samplers.TPESampler.
+                Defaults to optuna's own default (10) for backward compatibility
+                with Experiment 0's original (3-dim action space) run. See module
+                docstring for why this may need lowering on the larger, per-stage
+                action space.
+        """
+        self.n_startup_trials = n_startup_trials
+
     def run(self, problem: AttentionMappingProblem, *, n_iterations: int, seed: int) -> list[EvalResult]:
         eval_results: list[EvalResult] = []
 
@@ -40,6 +63,7 @@ class BayesianOptOptimizer(DataflowTilingOptimizer):
             eval_results.append(result)
             return result.reward
 
-        study = optuna.create_study(direction="maximize", sampler=optuna.samplers.TPESampler(seed=seed))
+        sampler = optuna.samplers.TPESampler(seed=seed, n_startup_trials=self.n_startup_trials)
+        study = optuna.create_study(direction="maximize", sampler=sampler)
         study.optimize(objective, n_trials=n_iterations)
         return eval_results

@@ -8,6 +8,7 @@ anything else.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -28,14 +29,26 @@ FIGURES_DIR = THIS_DIR / "results" / "figures"
 CONVERGENCE_THRESHOLD_FRAC = 0.05  # "within 5% of brute-force best" — see exp0_stats.md §3 for why this value
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--raw-csv", type=str, default=str(RAW_CSV))
+    # Output prefix — e.g. "exp0" (default) writes exp0_summary.csv/exp0_per_seed.csv/
+    # exp0_convergence_curves.png; "exp0_perstage" (the new-action-space re-run, see
+    # exp0_stats.md's old/new labelling) writes exp0_perstage_*.csv/.png instead, so
+    # the two analyses never collide (plan ground rule 6: never overwrite).
+    parser.add_argument("--out-prefix", type=str, default="exp0")
+    return parser.parse_args()
+
+
 def main() -> None:
-    df = pd.read_csv(RAW_CSV)
+    args = parse_args()
+    df = pd.read_csv(args.raw_csv)
     df["reward"] = df["notes"].apply(lambda s: json.loads(s)["reward"])
     ok = df[df["status"] == "OK"].copy()
 
     brute_force = ok[ok["optimizer"] == "brute_force"]
     if brute_force.empty:
-        raise ValueError("No OK brute_force rows in exp0.csv — cannot establish a ground-truth best.")
+        raise ValueError(f"No OK brute_force rows in {args.raw_csv} — cannot establish a ground-truth best.")
     best_reward = brute_force["reward"].max()
     print(f"[analyze_exp0] brute-force best reward (ground truth): {best_reward:.4f}")
 
@@ -46,10 +59,11 @@ def main() -> None:
     # --- Convergence-curve overlay (Exp0's required plot) ---
     plot_df = candidates.rename(columns={"optimizer": "group"})[["group", "seed", "iteration", "best_reward_so_far"]]
     FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+    fig_path = FIGURES_DIR / f"{args.out_prefix}_convergence_curves"
     plot_convergence_curves(
-        plot_df, FIGURES_DIR / "exp0_convergence_curves", value_col="best_reward_so_far", group_col="group",
+        plot_df, fig_path, value_col="best_reward_so_far", group_col="group",
     )
-    print(f"[analyze_exp0] wrote {FIGURES_DIR / 'exp0_convergence_curves'}.png/.svg")
+    print(f"[analyze_exp0] wrote {fig_path}.png/.svg")
 
     # --- Summary table: per optimizer, iterations-to-within-5%-of-best, wall-clock, final utilization ---
     threshold = best_reward * (1 - CONVERGENCE_THRESHOLD_FRAC) if best_reward > 0 else best_reward * (1 + CONVERGENCE_THRESHOLD_FRAC)
@@ -81,9 +95,11 @@ def main() -> None:
     summary["distance_from_brute_force_best"] = best_reward - summary["final_best_reward_mean"]
 
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-    per_seed.to_csv(PROCESSED_DIR / "exp0_per_seed.csv", index=False)
-    summary.to_csv(PROCESSED_DIR / "exp0_summary.csv", index=False)
-    print(f"[analyze_exp0] wrote {PROCESSED_DIR / 'exp0_per_seed.csv'} and exp0_summary.csv")
+    per_seed_path = PROCESSED_DIR / f"{args.out_prefix}_per_seed.csv"
+    summary_path = PROCESSED_DIR / f"{args.out_prefix}_summary.csv"
+    per_seed.to_csv(per_seed_path, index=False)
+    summary.to_csv(summary_path, index=False)
+    print(f"[analyze_exp0] wrote {per_seed_path} and {summary_path}")
     print(summary.to_string(index=False))
 
 

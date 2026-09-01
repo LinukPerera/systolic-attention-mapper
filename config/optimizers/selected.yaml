@@ -1,15 +1,43 @@
-# Written by Experiment 0 (optimizer bake-off), 2026-08-31. Referenced (not
-# re-decided) by Experiments 2-6, per CODING_AGENT_PLAN.md §6 Exp 0's acceptance
-# criteria. Full justification: ../../experiments/exp0_optimizer_bakeoff/exp0_stats.md
-selected_optimizer: bayesian_opt
-module: common.optimizers.bayesian_opt
-class: BayesianOptOptimizer
-hyperparameters_file: config/optimizers/bayesian_opt.yaml
+# Written by Experiment 0 (optimizer bake-off), 2026-08-31. Re-examined and
+# CHANGED 2026-09-02 after the optimizer action space was extended to per-stage
+# dataflow (NEXT_INSTRUCTIONS.md item 2) -- see exp0_stats.md §11 for the full
+# re-run data. Referenced (not re-decided) by Experiments 2-6, per
+# CODING_AGENT_PLAN.md §6 Exp 0's acceptance criteria. Full justification:
+# ../../experiments/exp0_optimizer_bakeoff/exp0_stats.md
+selected_optimizer: a2c
+module: common.optimizers.a2c
+class: A2COptimizer
+hyperparameters_file: config/optimizers/a2c.yaml
 reason: >
-  Across 5 seeds on the exp0_pilot workload/16x16 array, bayesian_opt (optuna TPE)
-  had the smallest mean distance from the brute-force ground-truth best reward
-  (1.06, vs 2.08 for a2c/ppo and 3.70 for evolutionary), converged fastest
-  (mean 0.6 iterations to within 5% of ground truth, vs 5.2 for a2c/ppo — 2.75 for
-  evolutionary but only 4/5 seeds converged at all), and had the lowest run-to-run
-  variance in final reward (std 0.83, vs evolutionary's 2.56). See exp0_stats.md
-  §7-8 for the full data and analysis this reason is based on.
+  CHANGED 2026-09-02: on the new per-stage action space (9 dims, was 3), a
+  re-run of the same 5-seed/15-iteration pilot bake-off found bayesian_opt no
+  longer the strongest candidate -- it had the WORST mean final reward (77.32,
+  vs 78.39 for a2c/ppo, 77.47 for evolutionary), the fewest converged seeds
+  (3/5, vs 5/5 for the other three), and the slowest mean convergence among
+  converged seeds (8.0 iterations, vs 4.0 for the other three). A follow-up
+  real re-test lowering optuna TPESampler's n_startup_trials from its default
+  10 to 5 (plausible mechanism: 10 pure-random startup trials cover a 9-dim
+  space far worse than a 3-dim one within the same 15-trial budget) partially
+  recovered performance (mean 77.72, vs 77.32 at n_startup_trials=10) but did
+  not close the gap with a2c/ppo -- the reversal is not fully explained by an
+  easily-fixable hyperparameter artifact.
+
+  a2c and ppo are statistically indistinguishable at this pilot's n=5 (final
+  reward 78.391 vs 78.393; per-seed values match to 2-3 decimal places for 3
+  of 5 seeds -- both are near-identical trajectories under this small budget,
+  same phenomenon noted in the original 2026-08-31 selection). a2c is selected
+  over ppo as a tie-break: it is the plan's originally-intended primary
+  method (before the necessary "REINFORCE has no SB3 implementation" ->
+  A2C substitution documented in common/optimizers/a2c.py), not because any
+  measured axis favors it over ppo -- either would be an equally defensible
+  choice on the data alone. See exp0_stats.md §11 for the full new-action-
+  space table, the n_startup_trials follow-up test, and caveats (same small-
+  pilot-scale limitations as the original 2026-08-31 selection, §9).
+
+  Original (now superseded) reason, kept for history: across 5 seeds on the
+  3-dim action space, bayesian_opt (optuna TPE) had the smallest mean distance
+  from the brute-force ground-truth best reward (1.06, vs 2.08 for a2c/ppo and
+  3.70 for evolutionary), converged fastest (mean 0.6 iterations to within 5%
+  of ground truth, vs 5.2 for a2c/ppo), and had the lowest run-to-run variance
+  in final reward (std 0.83, vs evolutionary's 2.56). See exp0_stats.md §7-8
+  (old action-space section) for that data.
