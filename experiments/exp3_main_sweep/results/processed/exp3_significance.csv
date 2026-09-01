@@ -1,0 +1,9 @@
+cell,n_seeds,comparison,t_statistic,t_pvalue,wilcoxon_statistic,wilcoxon_pvalue,cohens_d,significant_at_0.05,optimizer_wins
+seq128 @ 16x16,5,bayesian_opt vs. best_overall (best_fixed_per_stage),-23.478328015694313,1.9509599425457735e-05,0.0,0.0625,-10.499827488226048,True,False
+seq128 @ 16x16,5,bayesian_opt vs. best_single_dataflow (os_only),2.8048917458479528,0.048568866797790315,0.0,0.0625,1.2543857226488173,True,True
+seq128 @ 32x32,5,bayesian_opt vs. best_overall (best_fixed_per_stage),-17.70646203138975,5.976476663731354e-05,0.0,0.0625,-7.9185705486413,True,False
+seq128 @ 32x32,5,bayesian_opt vs. best_single_dataflow (os_only),4.659192584852097,0.009595342461090787,0.0,0.0625,2.0836542679984493,True,True
+seq256 @ 16x16,5,bayesian_opt vs. best_overall (best_fixed_per_stage),-129.26656010907178,2.147994837486024e-08,0.0,0.0625,-57.809763124289425,True,False
+seq256 @ 16x16,5,bayesian_opt vs. best_single_dataflow (os_only),5.579079325611027,0.005060237677488882,0.0,0.0625,2.495040124785988,True,True
+seq256 @ 32x32,5,bayesian_opt vs. best_overall (best_fixed_per_stage),-79.36257218309078,1.5108757946476737e-07,0.0,0.0625,-35.49202125412498,True,False
+seq256 @ 32x32,5,bayesian_opt vs. best_single_dataflow (os_only),5.456063759032476,0.005484472487044577,0.0,0.0625,2.44002589095393,True,True

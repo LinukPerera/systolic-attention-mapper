@@ -96,14 +96,58 @@ def plot_utilization_vs_array_size(df: pd.DataFrame, out_path: Path) -> None:
     plt.close(fig)
 
 
-def plot_utilization_heatmap(df: Any, out_path: Path) -> None:
-    """Heatmap of utilization by workload x array x method (Experiment 3)."""
-    raise NotImplementedError
+def plot_utilization_heatmap(df: pd.DataFrame, out_path: Path) -> None:
+    """Heatmap of utilization by workload x array x method (Experiment 3).
+
+    Args:
+        df: Columns ["cell", "method", "pe_utilization_pct"] — one row per
+            (cell, method); `cell` is a pre-formatted row label combining
+            workload and array (e.g. "seq128 @ 16x16"), since a heatmap needs a
+            2D grid and (workload, array) is naturally a compound row dimension.
+        out_path: Base output path; writes `<out_path>.png` and `<out_path>.svg`.
+    """
+    import matplotlib.pyplot as plt
+
+    apply_style()
+    pivot = df.pivot(index="cell", columns="method", values="pe_utilization_pct")
+    fig, ax = plt.subplots(figsize=(1.4 * len(pivot.columns) + 2, 0.6 * len(pivot.index) + 1.5))
+    im = ax.imshow(pivot.to_numpy(), cmap="viridis", aspect="auto", vmin=0, vmax=100)
+    ax.set_xticks(range(len(pivot.columns)))
+    ax.set_xticklabels(pivot.columns, rotation=30, ha="right")
+    ax.set_yticks(range(len(pivot.index)))
+    ax.set_yticklabels(pivot.index)
+    for i in range(len(pivot.index)):
+        for j in range(len(pivot.columns)):
+            val = pivot.to_numpy()[i, j]
+            if not np.isnan(val):
+                ax.text(j, i, f"{val:.1f}", ha="center", va="center",
+                        color="white" if val < 50 else "black", fontsize=9)
+    fig.colorbar(im, ax=ax, label="PE utilization (%)")
+    save_figure(fig, out_path)
+    plt.close(fig)
 
 
-def plot_pct_improvement_bars(df: Any, out_path: Path) -> None:
-    """Grouped bar chart of %-improvement over best baseline per workload (Experiment 3)."""
-    raise NotImplementedError
+def plot_pct_improvement_bars(df: pd.DataFrame, out_path: Path) -> None:
+    """Grouped bar chart of %-improvement over best baseline per workload (Experiment 3).
+
+    Args:
+        df: Columns ["cell", "pct_improvement_mean", "pct_improvement_ci"] — one
+            row per (workload, array) cell; `cell` a pre-formatted label as in
+            plot_utilization_heatmap. Error bars (95% CI) are mandatory here since
+            this aggregates the optimizer across seeds (plan §5).
+        out_path: Base output path; writes `<out_path>.png` and `<out_path>.svg`.
+    """
+    import matplotlib.pyplot as plt
+
+    apply_style()
+    fig, ax = plt.subplots(figsize=(max(6, 0.9 * len(df)), 4.5))
+    colors = [OPTIMIZER_COLORS["bayesian_opt"] if v >= 0 else DATAFLOW_COLORS["WS"] for v in df["pct_improvement_mean"]]
+    ax.bar(df["cell"], df["pct_improvement_mean"], yerr=df["pct_improvement_ci"], color=colors, capsize=4)
+    ax.axhline(0, color="black", linewidth=0.8)
+    ax.set_ylabel("% improvement over best static baseline")
+    plt.setp(ax.get_xticklabels(), rotation=30, ha="right")
+    save_figure(fig, out_path)
+    plt.close(fig)
 
 
 def plot_scalability_panels(df: Any, out_path: Path) -> None:
