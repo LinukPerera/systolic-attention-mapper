@@ -60,7 +60,13 @@ class BestFixedPerStageResult:
     """Full output of best_fixed_per_stage_mapping: the winning choice per stage,
     its already-computed SimulationResult (no re-simulation needed to use it), and
     every (stage, dataflow) candidate actually evaluated along the way — logged as
-    evidence by the caller, per plan §3, not discarded once the winner is known."""
+    evidence by the caller, per plan §3, not discarded once the winner is known.
+
+    winners/winner_results may have fewer entries than the workload has stages —
+    a stage where every dataflow candidate FAILED is simply absent from both, not
+    an error (see best_fixed_per_stage_mapping's docstring). Check
+    `len(winners) == <expected stage count>` before calling
+    combine_simulation_results on winner_results.values()."""
     winners: dict[str, Mapping]
     winner_results: dict[str, SimulationResult]
     all_attempts: list[StageAttempt]
@@ -101,6 +107,16 @@ def best_fixed_per_stage_mapping(
     winner_results.values() to get one whole-workload SimulationResult comparable
     to ws_only/os_only/is_only, as run_exp1.py does.
 
+    If every dataflow candidate FAILS for a given stage (e.g. the array is too
+    small for that stage's working set to even simulate — confirmed real, not
+    hypothetical: 8×8 OOM-killed, exit 137, on `exp1_head64_validation.yaml`,
+    2026-09-01), that stage is simply absent from `winners`/`winner_results` —
+    this function does NOT raise. Raising here previously discarded every
+    already-collected StageAttempt (real FAILED evidence) the moment one stage's
+    search came up empty, silently losing data ground rule 1 requires be logged.
+    Callers must check `len(result.winners) == 3` before combining — see
+    run_exp1.py's handling.
+
     Args:
         workload: The attention workload to evaluate.
         hardware: The hardware config to evaluate on (a loaded HardwareConfig, not a
@@ -108,13 +124,15 @@ def best_fixed_per_stage_mapping(
         scratch_dir: Directory to write each candidate's SCALE-Sim inputs/outputs into.
 
     Returns:
-        A BestFixedPerStageResult with the winning Mapping and SimulationResult per
-        stage, plus every (stage, dataflow) candidate actually evaluated.
+        A BestFixedPerStageResult with the winning Mapping and SimulationResult for
+        every stage that had at least one successful candidate, plus every
+        (stage, dataflow) candidate actually evaluated (including FAILED ones).
 
     Raises:
-        RuntimeError: Propagated from run_scale_sim if Docker isn't available/reachable
-            — this is a real simulator call, not a stub (plan ground rule 1: no result
-            without a real run).
+        RuntimeError: Propagated from run_scale_sim only if Docker itself isn't
+            available/reachable — an environment problem, not a per-candidate
+            simulation outcome (which is captured in all_attempts / left out of
+            winners instead, never raised).
     """
     shapes = workload_to_gemm_shapes(workload)
     winners: dict[str, Mapping] = {}
@@ -145,11 +163,10 @@ def best_fixed_per_stage_mapping(
                 best_edp, best_mode, best_result = edp, mode, result
 
         if best_mode is None or best_result is None:
-            raise RuntimeError(
-                f"best_fixed_per_stage_mapping: every dataflow candidate FAILED for stage "
-                f"'{shape.name}'; cannot pick a best-fixed-per-stage mapping without at least "
-                "one successful run. Check all_attempts for the individual FAILED results."
-            )
+            # Every dataflow candidate FAILED for this stage — real evidence (already
+            # in all_attempts), not an error to raise past. Leave this stage out of
+            # winners/winner_results; the caller decides how to handle a partial result.
+            continue
         winners[shape.name] = Mapping(dataflow_mode=best_mode)
         winner_results[shape.name] = best_result
 

@@ -1,0 +1,27 @@
+# Head-dim causal validation workload — added 2026-08-31 after diagnosing WHY
+# exp1_representative.yaml's knee sits at exactly 32x32.
+#
+# Root cause (traced to common/workload_gen.py's GemmShape derivation, not a bug):
+# qk_transpose's K dimension and score_times_v's N dimension are both fixed at
+# head_dim = hidden_dim/num_heads, independent of seq_len. exp1_representative.yaml
+# (hidden_dim=256, num_heads=8) gives head_dim=32 -- exactly where exp1_stats.md §8
+# found the utilization decline rate jumps ~3.8x. Only qkv_projection
+# (K=hidden_dim, N=3*hidden_dim) scales enough to use a larger array; the other two
+# GEMM stages structurally cannot, on ANY array bigger than head_dim, regardless of
+# how large seq_len is. This is a real, causal, mechanistic explanation -- and
+# directly reproduces the per-stage GEMM heterogeneity the literature review's
+# §2.2 (Ivanov et al. [2]; Kao et al./FLAT [3]) already argues for.
+#
+# This config tests that causal claim directly: same seq_len/num_heads as
+# exp1_representative.yaml, but hidden_dim doubled (256->512) so head_dim doubles
+# (32->64). PREDICTION: the knee should move from ~32x32 to ~64x64 if the causal
+# explanation is correct. Run the same sweep as exp1_representative.yaml's re-run
+# (results/raw/exp1_head64_validation.csv, kept separate -- plan ground rule 6) and
+# check whether the decline-rate acceleration point shifts to 64x64 as predicted.
+# VERIFIED 2026-09-01 (one call, 64x64, WS): 15.87s -- higher than
+# exp1_representative.yaml's ~11.4s mean (hidden_dim doubled), as expected.
+# Full 5-array-size sweep (65 calls) estimated ~16 min -- proceeding at this scale.
+name: exp1_head64_validation
+seq_len: 256
+hidden_dim: 512
+num_heads: 8

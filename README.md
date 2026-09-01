@@ -57,7 +57,7 @@ only the physical folder layout changed.
 
 ## Status
 
-**Phase A — Stage 0 build-out: done.** **Phase B: Experiments 0 and 1 complete, 2026-08-31.**
+**Phase A — Stage 0 build-out: done.** **Phase B: Experiments 0 and 1 complete, 2026-09-01.**
 See `RESULTS_TRACKER.md` for the live rollup.
 
 - Repo is a git repository (`git init` done; see Setup below for identity note).
@@ -76,17 +76,21 @@ See `RESULTS_TRACKER.md` for the live rollup.
   `experiments/exp0_optimizer_bakeoff/exp0_stats.md` for the full analysis,
   including honestly-flagged limitations (pilot workload scale reduced from the
   plan's example for wall-clock reasons; no significance test at n=5 seeds).
-- **Experiment 1 (array-size sensitivity) is complete**, now including a
-  representative-scale re-run: the original small-pilot-workload run (seq_len=64,
-  65 simulations, zero failures) showed no plateau anywhere in 8×8–128×128 — kept
-  as a documented sub-finding. A re-run at seq_len=256 (another 65 simulations,
-  zero failures, timed for real before committing to the full sweep) still doesn't
-  satisfy the plan's literal <2%-per-doubling criterion, but shows a clear,
-  quantified "knee": utilization declines ~3.8× faster per doubling past 32×32
-  than before it. **16×16/32×32 are now justified as primary array sizes** on that
-  relative-decline-rate basis — an explicitly adapted criterion, not the plan's
-  literal plateau, which neither run satisfied. Full analysis in
-  `experiments/exp1_array_sensitivity/exp1_stats.md`.
+- **Experiment 1 (array-size sensitivity) is complete**, now with three runs and a
+  confirmed mechanistic finding: the utilization "knee" seen in a representative-
+  scale re-run (seq_len=256, head_dim=32) tracks **`head_dim`**, not `seq_len` or
+  array size directly — traced to `qk_transpose`/`score_times_v`'s GEMM dimensions
+  being fixed at `head_dim` regardless of `seq_len` (`common/workload_gen.py`). The
+  falsifiable prediction this implies (doubling head_dim 32→64 shifts the knee one
+  array-size doubling higher) was stated, then **confirmed** by a dedicated
+  validation run — the knee moved from 32×32–64×64 to 64×64–128×128 exactly as
+  predicted. **16×16/32×32 are justified as primary array sizes on this
+  mechanistic basis**, and `config/workloads/README.md` now mandates
+  `head_dim=64` (fixed) for every Experiment 2+ workload. One real, informative
+  failure along the way: the validation run's 8×8 array was genuinely infeasible
+  (Docker OOM) — logged as evidence, and a real bug in `best_fixed_per_stage_mapping`
+  that used to crash the whole sweep on such a failure is now fixed. Full analysis
+  in `experiments/exp1_array_sensitivity/exp1_stats.md`.
 - `common/optimizers/{ppo,evolutionary,bayesian_opt}.py`, `a2c.py`, `environment.py`,
   `brute_force.py`, `common/simulator_interface.py`'s `combine_simulation_results`
   are real, tested implementations now. `common/plotting/figures.py`'s

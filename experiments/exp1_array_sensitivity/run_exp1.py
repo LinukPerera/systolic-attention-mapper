@@ -91,14 +91,18 @@ def parse_args() -> argparse.Namespace:
                              "(a literal seq_len=512 workload would cost ~90 calls x ~178s, "
                              "4+ hours -- see exp0_stats.md §3).")
     parser.add_argument("--hardware-names", type=str, nargs="+", default=HARDWARE_NAMES)
-    parser.add_argument("--out", type=str, default=str(RAW_CSV))
+    parser.add_argument("--out", type=str, default=str(RAW_CSV),
+                        help="Output CSV. A relative path is resolved against this experiment's own "
+                             "folder (experiments/exp1_array_sensitivity/), NOT the current working "
+                             "directory or project root -- so 'results/raw/foo.csv' always lands "
+                             "next to this script's other results, regardless of where you run it from.")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     workload = load_workload_yaml(str(_PROJECT_ROOT / args.workload) if not Path(args.workload).is_absolute() else args.workload)
-    csv_path = Path(args.out)
+    csv_path = Path(args.out) if Path(args.out).is_absolute() else (THIS_DIR / args.out)
     git_commit = logging_utils.current_git_commit(_PROJECT_ROOT)
     scratch_root = RESULTS_DIR / "raw" / "_scratch"
 
@@ -109,43 +113,76 @@ def main() -> None:
         hardware = load_hardware_config(str(_PROJECT_ROOT / "config" / "hardware" / f"{hw_name}.yaml"))
         print(f"[exp1] {hw_name} ...")
 
-        # --- Single-dataflow baselines: one whole-workload simulation each ---
-        for method, mapping_fn in SINGLE_DATAFLOW_BASELINES.items():
-            mapping = mapping_fn(workload, str(_PROJECT_ROOT / "config" / "hardware" / f"{hw_name}.yaml"))
-            run_dir = scratch_root / hw_name / method
-            topology_path, layout_path, config_path = write_scale_sim_inputs(
-                topology_rows, hardware, mapping.dataflow_mode, run_dir,
-            )
-            result = run_scale_sim(
-                topology_path, layout_path, config_path,
-                run_name=f"{hardware.name}_{mapping.dataflow_mode}", hardware=hardware, output_dir=run_dir / "output",
-            )
-            _log_row(
-                csv_path=csv_path, git_commit=git_commit, method=method, hardware=hardware,
-                workload=workload, dataflow_mode=mapping.dataflow_mode, result=result,
-                energy_per_cycle_pj=hardware.energy_per_cycle_pj,
-            )
-            print(f"[exp1]   {method}: status={result.status} "
-                  f"util={result.pe_utilization_pct:.2f}%" if result.status == "OK" else f"[exp1]   {method}: FAILED")
+        try:
+            # --- Single-dataflow baselines: one whole-workload simulation each ---
+            for method, mapping_fn in SINGLE_DATAFLOW_BASELINES.items():
+                mapping = mapping_fn(workload, str(_PROJECT_ROOT / "config" / "hardware" / f"{hw_name}.yaml"))
+                run_dir = scratch_root / hw_name / method
+                topology_path, layout_path, config_path = write_scale_sim_inputs(
+                    topology_rows, hardware, mapping.dataflow_mode, run_dir,
+                )
+                result = run_scale_sim(
+                    topology_path, layout_path, config_path,
+                    run_name=f"{hardware.name}_{mapping.dataflow_mode}", hardware=hardware, output_dir=run_dir / "output",
+                )
+                _log_row(
+                    csv_path=csv_path, git_commit=git_commit, method=method, hardware=hardware,
+                    workload=workload, dataflow_mode=mapping.dataflow_mode, result=result,
+                    energy_per_cycle_pj=hardware.energy_per_cycle_pj,
+                )
+                status_line = (f"status=OK util={result.pe_utilization_pct:.2f}%" if result.status == "OK"
+                               else f"status=FAILED ({result.notes[:80]})")
+                print(f"[exp1]   {method}: {status_line}")
 
-        # --- best_fixed_per_stage: per-stage search (logged in full) + combined aggregate ---
-        bfps = best_fixed_per_stage_mapping(workload, hardware, scratch_dir=scratch_root / hw_name / "best_fixed_per_stage_search")
-        for attempt in bfps.all_attempts:
-            _log_row(
-                csv_path=csv_path, git_commit=git_commit, method="best_fixed_per_stage_search", hardware=hardware,
-                workload=workload, dataflow_mode=attempt.dataflow_mode, result=attempt.result,
-                energy_per_cycle_pj=hardware.energy_per_cycle_pj, notes_extra={"stage": attempt.stage_name},
-            )
-        combined = combine_simulation_results(list(bfps.winner_results.values()))
-        per_stage_choice = {stage: m.dataflow_mode for stage, m in bfps.winners.items()}
-        _log_row(
-            csv_path=csv_path, git_commit=git_commit, method="best_fixed_per_stage", hardware=hardware,
-            workload=workload, dataflow_mode="mixed", result=combined,
-            energy_per_cycle_pj=hardware.energy_per_cycle_pj, notes_extra={"per_stage_dataflow": per_stage_choice},
-        )
-        print(f"[exp1]   best_fixed_per_stage: status={combined.status} "
-              f"util={combined.pe_utilization_pct:.2f}% per_stage={per_stage_choice}" if combined.status == "OK"
-              else "[exp1]   best_fixed_per_stage: FAILED")
+            # --- best_fixed_per_stage: per-stage search (logged in full) + combined aggregate ---
+            bfps = best_fixed_per_stage_mapping(workload, hardware, scratch_dir=scratch_root / hw_name / "best_fixed_per_stage_search")
+            for attempt in bfps.all_attempts:
+                _log_row(
+                    csv_path=csv_path, git_commit=git_commit, method="best_fixed_per_stage_search", hardware=hardware,
+                    workload=workload, dataflow_mode=attempt.dataflow_mode, result=attempt.result,
+                    energy_per_cycle_pj=hardware.energy_per_cycle_pj, notes_extra={"stage": attempt.stage_name},
+                )
+
+            n_stages = len(topology_rows) and len({row["LayerName"].split("_head")[0] for row in topology_rows})
+            if len(bfps.winners) < n_stages:
+                # At least one stage had zero successful dataflow candidates (real
+                # infeasibility, e.g. an OOM at this array size — not hypothetical,
+                # confirmed 2026-09-01 at 8x8 on exp1_head64_validation.yaml) — no
+                # whole-workload combination is possible. Log a FAILED aggregate row
+                # (the per-stage evidence is already logged above) and move on to the
+                # next array size rather than crashing the whole sweep.
+                missing_stages = sorted({a.stage_name for a in bfps.all_attempts} - set(bfps.winners))
+                failed_combined = SimulationResult(
+                    exec_cycles=0, pe_utilization_pct=0.0, sram_dram_traffic_bytes=0,
+                    wall_clock_s=sum(a.result.wall_clock_s for a in bfps.all_attempts), status="FAILED",
+                    notes=f"stage(s) with zero successful dataflow candidates: {missing_stages}",
+                )
+                _log_row(
+                    csv_path=csv_path, git_commit=git_commit, method="best_fixed_per_stage", hardware=hardware,
+                    workload=workload, dataflow_mode="mixed", result=failed_combined,
+                    energy_per_cycle_pj=hardware.energy_per_cycle_pj,
+                    notes_extra={"missing_stages": missing_stages},
+                )
+                print(f"[exp1]   best_fixed_per_stage: status=FAILED (no winner for stage(s) {missing_stages})")
+            else:
+                combined = combine_simulation_results(list(bfps.winner_results.values()))
+                per_stage_choice = {stage: m.dataflow_mode for stage, m in bfps.winners.items()}
+                _log_row(
+                    csv_path=csv_path, git_commit=git_commit, method="best_fixed_per_stage", hardware=hardware,
+                    workload=workload, dataflow_mode="mixed", result=combined,
+                    energy_per_cycle_pj=hardware.energy_per_cycle_pj, notes_extra={"per_stage_dataflow": per_stage_choice},
+                )
+                status_line = (f"status=OK util={combined.pe_utilization_pct:.2f}% per_stage={per_stage_choice}"
+                               if combined.status == "OK" else "status=FAILED")
+                print(f"[exp1]   best_fixed_per_stage: {status_line}")
+
+        except Exception as e:
+            # A hardware size that's wholly infeasible for this workload (or any
+            # other unexpected failure) must not abort the rest of the sweep — the
+            # other array sizes are independent, real, and still worth running.
+            # Whatever real rows were already logged for this size stay in the CSV;
+            # this size just doesn't get further data beyond what's already written.
+            print(f"[exp1]   {hw_name}: UNEXPECTED ERROR, skipping rest of this array size: {e}")
 
     print(f"[exp1] done. Raw results: {csv_path}")
 
