@@ -31,6 +31,7 @@ from common.simulator_interface import (
     SUPPORTED_DATAFLOW_MODES,
     HardwareConfig,
     SimulationResult,
+    combine_simulation_results,
     run_scale_sim,
     write_scale_sim_inputs,
 )
@@ -171,3 +172,70 @@ def best_fixed_per_stage_mapping(
         winner_results[shape.name] = best_result
 
     return BestFixedPerStageResult(winners=winners, winner_results=winner_results, all_attempts=all_attempts)
+
+
+@dataclass(frozen=True)
+class AllBaselinesResult:
+    """Every fixed baseline evaluated for one (workload, hardware) cell:
+    ws_only/os_only/is_only's SimulationResult, plus best_fixed_per_stage's full
+    BestFixedPerStageResult (per-stage search evidence + combined result, if the
+    search wasn't wholly infeasible for every stage — see best_fixed_per_stage's
+    docstring)."""
+    ws_only: SimulationResult
+    os_only: SimulationResult
+    is_only: SimulationResult
+    best_fixed_per_stage: BestFixedPerStageResult
+    best_fixed_per_stage_combined: SimulationResult | None  # None iff any stage had zero successful candidates
+
+
+def evaluate_all_baselines(
+    workload: AttentionWorkload,
+    hardware: HardwareConfig,
+    *,
+    scratch_dir: Path,
+) -> AllBaselinesResult:
+    """Run all four fixed baselines (ws_only, os_only, is_only, best_fixed_per_stage)
+    for one (workload, hardware) cell — the shared logic Experiment 1 (array-size
+    sweep) and Experiment 3 (main sweep) both need, factored out once instead of
+    duplicated per experiment script (plan §3).
+
+    Args:
+        workload: The attention workload to evaluate.
+        hardware: The hardware config to evaluate on.
+        scratch_dir: Directory to write every candidate's SCALE-Sim inputs/outputs
+            into (one subdirectory per method).
+
+    Returns:
+        An AllBaselinesResult. `best_fixed_per_stage_combined` is None if at least
+        one GEMM stage had zero successful dataflow candidates (real infeasibility,
+        not an error) — callers must handle that case explicitly (log a FAILED row;
+        see run_exp1.py/run_exp3.py) rather than assume it's always present.
+
+    Raises:
+        RuntimeError: Propagated from run_scale_sim only if Docker itself isn't
+            available/reachable.
+    """
+    topology_rows = gemm_shapes_to_topology_rows(workload_to_gemm_shapes(workload))
+
+    def _run_single_dataflow(mapping: Mapping, method_name: str) -> SimulationResult:
+        run_dir = Path(scratch_dir) / method_name
+        topology_path, layout_path, config_path = write_scale_sim_inputs(
+            topology_rows, hardware, mapping.dataflow_mode, run_dir,
+        )
+        return run_scale_sim(
+            topology_path, layout_path, config_path,
+            run_name=f"{hardware.name}_{mapping.dataflow_mode}", hardware=hardware, output_dir=run_dir / "output",
+        )
+
+    ws_result = _run_single_dataflow(ws_only_mapping(workload, ""), "ws_only")
+    os_result = _run_single_dataflow(os_only_mapping(workload, ""), "os_only")
+    is_result = _run_single_dataflow(is_only_mapping(workload, ""), "is_only")
+
+    bfps = best_fixed_per_stage_mapping(workload, hardware, scratch_dir=Path(scratch_dir) / "best_fixed_per_stage_search")
+    n_stages = len({shape.name for shape in workload_to_gemm_shapes(workload)})
+    combined = combine_simulation_results(list(bfps.winner_results.values())) if len(bfps.winners) == n_stages else None
+
+    return AllBaselinesResult(
+        ws_only=ws_result, os_only=os_result, is_only=is_result,
+        best_fixed_per_stage=bfps, best_fixed_per_stage_combined=combined,
+    )

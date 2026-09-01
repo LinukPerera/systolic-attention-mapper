@@ -1,0 +1,8 @@
+# Experiment 3 main sweep, seq_len=128 point. hidden_dim=512/num_heads=8 ->
+# head_dim=64, per the standard config/workloads/README.md adopted after
+# Experiment 1's diagnosis. Verified by hand before committing (see exp3_stats.md
+# §3): 33.01s/call @ 16x16, 14.82s/call @ 32x32.
+name: exp3_seq128
+seq_len: 128
+hidden_dim: 512
+num_heads: 8

@@ -1,0 +1,18 @@
+# Experiment 3 main sweep, seq_len=256 point. hidden_dim=512/num_heads=8 ->
+# head_dim=64, per the standard config/workloads/README.md adopted after
+# Experiment 1's diagnosis (this is the same workload as
+# config/workloads/exp1_head64_validation.yaml, reused rather than duplicated --
+# its real per-call cost is already measured there: ~69-77s/call @ 16x16,
+# ~28-30s/call @ 32x32, see exp1_head64_validation.csv).
+#
+# seq_len=512 and seq_len=1024 (both timed by hand before this file was written --
+# see exp3_stats.md §3) were rejected for this grid: seq_len=512 timed out
+# entirely (>180s, no result) and seq_len=1024 OOM-killed after 134s at only 73%
+# progress, both @ 16x16, the smaller of Experiment 1's two justified array
+# sizes and therefore mandatory in this grid. This is the plan's own instructed
+# discipline ("prefer fewer seq_len points... document it") applied to real,
+# measured infeasibility, not an assumption.
+name: exp3_seq256
+seq_len: 256
+hidden_dim: 512
+num_heads: 8
