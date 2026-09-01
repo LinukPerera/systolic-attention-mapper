@@ -2,9 +2,11 @@
 optimizers/evolutionary.py — evolutionary/genetic-algorithm candidate for
 dataflow+SRAM-partition search.
 
-Uses `deap` (plan §2). Genome: 3 floats in [0,1], decoded via
-common.optimizers.environment.decode_raw_action — the same encoding every other
-candidate searches (see that function's docstring), for a fair bake-off.
+Uses `deap` (plan §2). Genome: `3 * len(STAGE_NAMES)` (= 9) floats in [0,1],
+decoded via common.optimizers.environment.decode_raw_action — the same encoding
+every other candidate searches (see that function's docstring), for a fair
+bake-off. (Revised 2026-09-02 from a 3-float genome to the per-stage action
+space — see environment.py's module docstring.)
 
 Fitness: each individual's real EvalResult.reward, from one real problem.evaluate()
 call — never a synthetic surrogate. The first generation costs population_size real
@@ -36,7 +38,9 @@ import random
 from deap import base, creator, tools
 
 from common.optimizers.base import DataflowTilingOptimizer
-from common.optimizers.environment import AttentionMappingProblem, EvalResult, decode_raw_action
+from common.optimizers.environment import STAGE_NAMES, AttentionMappingProblem, EvalResult, decode_raw_action
+
+_GENOME_LEN = 3 * len(STAGE_NAMES)
 
 if not hasattr(creator, "AttentionMappingFitness"):
     creator.create("AttentionMappingFitness", base.Fitness, weights=(1.0,))
@@ -78,7 +82,7 @@ class EvolutionaryOptimizer(DataflowTilingOptimizer):
         toolbox = base.Toolbox()
         toolbox.register("attr_float", random.random)
         toolbox.register(
-            "individual", tools.initRepeat, creator.AttentionMappingIndividual, toolbox.attr_float, n=3,
+            "individual", tools.initRepeat, creator.AttentionMappingIndividual, toolbox.attr_float, n=_GENOME_LEN,
         )
         toolbox.register("population", tools.initRepeat, list, toolbox.individual)
         toolbox.register("mate", tools.cxTwoPoint)

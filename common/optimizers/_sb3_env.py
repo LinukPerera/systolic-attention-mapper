@@ -9,16 +9,20 @@ evaluations (the same fixed workload/hardware is optimized throughout), so each 
 "timestep" corresponds to exactly one real simulator call, and total_timesteps
 passed to .learn() is exactly the iteration budget in problem.evaluate() calls.
 
-Action encoding: Box(shape=(3,)), decoded via
-common.optimizers.environment.decode_raw_action — see that function's docstring for
-why this exact encoding is shared across all four optimizer candidates.
+Action encoding: Box(shape=(3 * len(STAGE_NAMES),)) — 3 raw values per GEMM stage,
+decoded via common.optimizers.environment.decode_raw_action — see that function's
+docstring for why this exact encoding is shared across all four optimizer
+candidates. (Revised 2026-09-02 from shape=(3,) to the per-stage action space —
+see environment.py's module docstring.)
 """
 from __future__ import annotations
 
 import gymnasium as gym
 import numpy as np
 
-from common.optimizers.environment import AttentionMappingProblem, EvalResult, decode_raw_action
+from common.optimizers.environment import STAGE_NAMES, AttentionMappingProblem, EvalResult, decode_raw_action
+
+_ACTION_DIM = 3 * len(STAGE_NAMES)
 
 
 class AttentionMappingGymEnv(gym.Env):
@@ -29,7 +33,7 @@ class AttentionMappingGymEnv(gym.Env):
     def __init__(self, problem: AttentionMappingProblem) -> None:
         super().__init__()
         self.problem = problem
-        self.action_space = gym.spaces.Box(low=0.0, high=1.0, shape=(3,), dtype=np.float32)
+        self.action_space = gym.spaces.Box(low=0.0, high=1.0, shape=(_ACTION_DIM,), dtype=np.float32)
         # Constant dummy observation — there is no state to observe (see module docstring).
         self.observation_space = gym.spaces.Box(low=0.0, high=1.0, shape=(1,), dtype=np.float32)
         self.eval_results: list[EvalResult] = []
