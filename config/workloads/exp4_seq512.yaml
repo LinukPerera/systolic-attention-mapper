@@ -1,0 +1,21 @@
+# Experiment 4 scalability extension point, seq_len=512. hidden_dim=512/num_heads=8
+# -> head_dim=64, same standard as exp3_seq*.yaml.
+#
+# Real, hand-timed feasibility ceiling per array size (verified 2026-09-01, one call
+# each, before committing to this grid -- same discipline as every prior experiment):
+#   - 16x16: seq_len=512 times out entirely (>180s, no result) -- already measured
+#     in exp3_stats.md §3 while designing Experiment 3's grid. NOT re-attempted here
+#     (a single-call probe already establishes infeasibility; running a full
+#     baseline+optimizer cell against a config already shown infeasible would waste
+#     real time for ~zero new information).
+#   - 32x32: seq_len=512 succeeds (67.29s/call). seq_len=1024 FAILS (184.08s,
+#     status=FAILED) -- also not re-attempted as a full cell for the same reason.
+#
+# This is itself a real scalability finding for Experiment 4's RQ3 answer: as array
+# size doubles (16x16 -> 32x32), the maximum simulatable seq_len roughly doubles too
+# (256 -> 512) -- not just optimizer/baseline performance scales with array size,
+# the sheer feasibility of simulating the workload does too.
+name: exp4_seq512
+seq_len: 512
+hidden_dim: 512
+num_heads: 8
