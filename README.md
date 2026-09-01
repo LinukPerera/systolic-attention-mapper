@@ -57,7 +57,7 @@ only the physical folder layout changed.
 
 ## Status
 
-**Phase A — Stage 0 build-out: done.** **Phase B: Experiments 0 and 1 complete, 2026-09-01.**
+**Phase A — Stage 0 build-out: done.** **Phase B: Experiments 0, 1, and 2 complete, 2026-09-01.**
 See `RESULTS_TRACKER.md` for the live rollup.
 
 - Repo is a git repository (`git init` done; see Setup below for identity note).
@@ -91,13 +91,21 @@ See `RESULTS_TRACKER.md` for the live rollup.
   (Docker OOM) — logged as evidence, and a real bug in `best_fixed_per_stage_mapping`
   that used to crash the whole sweep on such a failure is now fixed. Full analysis
   in `experiments/exp1_array_sensitivity/exp1_stats.md`.
+- **Experiment 2 (search/training convergence) is complete**: `bayesian_opt`
+  (Experiment 0's selection, not re-decided) run for 5 seeds × 40 real iterations
+  (200 simulations, zero failures) on a fixed `head_dim=64` workload at 16×16.
+  A convergence criterion was stated as a formula *before* running (best-reward-
+  so-far variance over a trailing window < ε) — 5/5 seeds converged, all at the
+  same iteration. Honestly flagged: the criterion triggers well before the
+  trajectories visually stabilize, a real looseness in the chosen ε, reported
+  rather than hidden. Full analysis in `experiments/exp2_convergence/exp2_stats.md`.
 - `common/optimizers/{ppo,evolutionary,bayesian_opt}.py`, `a2c.py`, `environment.py`,
   `brute_force.py`, `common/simulator_interface.py`'s `combine_simulation_results`
   are real, tested implementations now. `common/plotting/figures.py`'s
   `plot_convergence_curves` and `plot_utilization_vs_array_size` are real; the rest
   of that file remains stubbed until the experiment that needs each figure is reached.
-- `experiments/exp{0,1}_*/run_expN.py` and `analyze_expN.py` are real, runnable
-  scripts. `run_exp2.py` … `run_exp6.py` are still stubs.
+- `experiments/exp{0,1,2}_*/run_expN.py` and `analyze_expN.py` are real, runnable
+  scripts. `run_exp3.py` … `run_exp6.py` are still stubs.
 - 25 of 25 tests pass, including a real end-to-end SCALE-Sim smoke test.
 
 Phase B continues with Experiment 2 (search/training convergence, using the now-
