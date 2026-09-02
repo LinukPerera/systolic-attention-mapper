@@ -16,6 +16,28 @@ FROM python:3.11-slim
 
 RUN pip install --no-cache-dir "numpy<1.25" "scalesim==3.0.0"
 
+# Real upstream bug patch, verified 2026-09-02 by reading scale.py/scale_sim.py
+# source in this exact image: scale.py's own `-s`/save-trace CLI flag ("Y"/"N",
+# default "Y") is parsed into a local `save_space` variable but then never passed
+# to the scalesim() object it constructs -- `save_disk_space=False` is hardcoded
+# on that call, so `-s N` silently has NO effect and every real run always writes
+# full per-cycle layer*/{IFMAP,FILTER,OFMAP}_{SRAM,DRAM}_TRACE.csv files (measured:
+# up to ~430MB for a single (stage, dataflow) candidate at this project's
+# seq_len=256/head_dim=64 scale) that common/simulator_interface.py's
+# _parse_scale_sim_report NEVER reads (only COMPUTE_REPORT.csv and
+# DETAILED_ACCESS_REPORT.csv, both a few hundred bytes). This was the real,
+# measured root cause of results/raw/_scratch/ reaching 59GB partway through one
+# Experiment 3 re-run, and of real, unnecessary per-call wall-clock I/O (the
+# per-stage action space already triples real Docker calls per evaluate()).
+# One-line source patch: make save_disk_space actually reflect the CLI flag,
+# rather than forking/vendoring the whole package for a single hardcoded
+# argument. Re-verify this patch still applies/is still needed if the pinned
+# scalesim version above ever changes.
+RUN sed -i \
+    's/s = scalesim(save_disk_space=False,/s = scalesim(save_disk_space=save_space,/' \
+    /usr/local/lib/python3.11/site-packages/scalesim/scale.py && \
+    grep -q "save_disk_space=save_space" /usr/local/lib/python3.11/site-packages/scalesim/scale.py
+
 WORKDIR /workspace
 
 ENTRYPOINT ["python", "-m", "scalesim.scale"]

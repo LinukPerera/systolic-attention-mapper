@@ -313,6 +313,41 @@ def write_scale_sim_inputs(
     return topology_path, layout_path, config_path
 
 
+# Memoized per-process: `docker info` alone measured ~0.6s (2026-09-02) -- a real,
+# non-negligible cost when paid on *every* run_scale_sim call, now 3x more calls
+# per real evaluate() than before the per-stage action space (environment.py).
+# Checked once per process instead; a genuine mid-run daemon loss (e.g. Docker
+# Desktop crashing, as happened for real this session after a disk-space
+# exhaustion) is still caught -- see the `_daemon_checked` reset in run_scale_sim
+# below, right where a docker-connectivity failure is distinguished from a real
+# simulation failure.
+_daemon_checked = False
+
+
+def _ensure_docker_daemon_reachable() -> None:
+    """Raise RuntimeError if the `docker` CLI/daemon isn't usable; a no-op after
+    the first successful check in this process (see module comment above)."""
+    global _daemon_checked
+    if _daemon_checked:
+        return
+    if shutil.which("docker") is None:
+        raise RuntimeError(
+            "docker executable not found on PATH. SCALE-Sim runs containerized per "
+            "docs/CODING_AGENT_PLAN.md §2 (\"Simulator: SCALE-Sim (containerized per the "
+            "proposal — Docker)\"). Install Docker before running any real experiment."
+        )
+    daemon_check = subprocess.run(["docker", "info"], capture_output=True, text=True)
+    if daemon_check.returncode != 0:
+        raise RuntimeError(
+            "docker CLI is present but the Docker daemon is not reachable "
+            f"(docker info exited {daemon_check.returncode}: "
+            f"{daemon_check.stderr.strip()[-500:]}). Start Docker Desktop / the docker "
+            "daemon before running any real experiment — this is an environment problem, "
+            "not a simulation result, so it is not logged as a FAILED run."
+        )
+    _daemon_checked = True
+
+
 def run_scale_sim(
     topology_path: Path,
     layout_path: Path,
@@ -351,21 +386,7 @@ def run_scale_sim(
         RuntimeError: If the `docker` CLI is missing or the daemon isn't reachable —
             this is treated as an environment problem to fix, not a failed experiment run.
     """
-    if shutil.which("docker") is None:
-        raise RuntimeError(
-            "docker executable not found on PATH. SCALE-Sim runs containerized per "
-            "docs/CODING_AGENT_PLAN.md §2 (\"Simulator: SCALE-Sim (containerized per the "
-            "proposal — Docker)\"). Install Docker before running any real experiment."
-        )
-    daemon_check = subprocess.run(["docker", "info"], capture_output=True, text=True)
-    if daemon_check.returncode != 0:
-        raise RuntimeError(
-            "docker CLI is present but the Docker daemon is not reachable "
-            f"(docker info exited {daemon_check.returncode}: "
-            f"{daemon_check.stderr.strip()[-500:]}). Start Docker Desktop / the docker "
-            "daemon before running any real experiment — this is an environment problem, "
-            "not a simulation result, so it is not logged as a FAILED run."
-        )
+    _ensure_docker_daemon_reachable()
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -373,6 +394,20 @@ def run_scale_sim(
 
     # docker/scalesim/Dockerfile sets ENTRYPOINT ["python", "-m", "scalesim.scale"],
     # so the container is run with just scale.py's own CLI args.
+    #
+    # "-s", "N" (added 2026-09-02, real fix for a real bottleneck): scale.py's own
+    # `-s`/save-trace flag defaults to "Y" (verified by reading scale.py source in
+    # the built image) -- every real run was writing full per-cycle
+    # layer*/{IFMAP,FILTER,OFMAP}_{SRAM,DRAM}_TRACE.csv files (megabytes per real
+    # call, x num_heads layers for qk_transpose/score_times_v) that
+    # _parse_scale_sim_report below NEVER reads (only COMPUTE_REPORT.csv and
+    # DETAILED_ACCESS_REPORT.csv, both a few hundred bytes -- verified by grepping
+    # this function's own body). This was the real, measured cause of
+    # results/raw/_scratch/ ballooning to 59GB partway through one Experiment 3
+    # re-run (and contributed real, unnecessary per-call I/O wall-clock too, since
+    # evaluate() now makes 3x as many real calls as before the per-stage action
+    # space). Disabling trace output changes nothing this project's own metrics
+    # depend on -- verified before, not after, making this change.
     cmd = [
         "docker", "run", "--rm",
         "-v", f"{host_dir}:/workspace",
@@ -382,6 +417,7 @@ def run_scale_sim(
         "-c", f"/workspace/{config_path.name}",
         "-p", "/workspace/output",
         "-i", "gemm",
+        "-s", "N",
     ]
 
     start = time.monotonic()
@@ -396,6 +432,18 @@ def run_scale_sim(
     wall_clock_s = time.monotonic() - start
 
     if proc.returncode != 0:
+        # Distinguish "the daemon actually died mid-sweep" (real, happened this
+        # session after a disk-space exhaustion crashed Docker Desktop) from a
+        # genuine simulation failure -- the former is an environment problem that
+        # should raise loudly (per this function's own contract), not get quietly
+        # logged as one more FAILED row indistinguishable from a real infeasible
+        # config. Only re-checks (paying `docker info`'s cost) on this failure
+        # path, not on every call -- see _ensure_docker_daemon_reachable.
+        stderr_lower = proc.stderr.lower()
+        if "cannot connect to the docker daemon" in stderr_lower or "daemon is not running" in stderr_lower:
+            global _daemon_checked
+            _daemon_checked = False
+            _ensure_docker_daemon_reachable()  # raises RuntimeError with a clear message if still down
         return SimulationResult(
             exec_cycles=0, pe_utilization_pct=0.0, sram_dram_traffic_bytes=0,
             wall_clock_s=wall_clock_s, status="FAILED",
