@@ -1,0 +1,5 @@
+cell,comparison,t_statistic,t_pvalue,wilcoxon_statistic,wilcoxon_pvalue,significant_at_0.05,tiling_only_wins,dataflow_only_wins
+seq128 @ 16x16,tiling_only vs. joint (paired by seed),1.0459955444543252,0.35460514903946366,4.0,0.4375,False,True,
+seq128 @ 16x16,dataflow_only vs. joint (paired by seed),0.513930917942095,0.6343881435750778,7.0,1.0,False,,True
+seq256 @ 32x32,tiling_only vs. joint (paired by seed),1.3833576848182576,0.23875171838901796,4.0,0.4375,False,True,
+seq256 @ 32x32,dataflow_only vs. joint (paired by seed),0.3174009023810626,0.7668169224075392,7.0,1.0,False,,True
