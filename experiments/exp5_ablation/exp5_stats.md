@@ -106,6 +106,152 @@ Zero `status == "FAILED"` rows in `results/raw/exp5.csv` (121 rows, all `OK`).
 
 Comparison against literature-reported figures is not directly applicable — the lit review's "joint dataflow+tiling" gap claim this experiment tests is a methodological point about this project's own optimizer design, not a number to compare against external systems.
 
+---
+
+## 11. Per-stage action-space re-run (2026-09-03) — reverses §8's headline finding
+
+`docs/NEXT_INSTRUCTIONS.md` item 1, directly following §9's own second flagged
+follow-up: once Experiment 3's action space moved to per-stage dataflow choice
+(`exp3_stats.md` §11), this ablation should be re-run to check whether
+`dataflow_only` — now able to vary dataflow **per stage** instead of one global
+choice — contributes a real, non-zero share of the gain. **It does.**
+Everything in §1–10 above is left as-is, unmodified (plan ground rule 6) — this
+section is the new, authoritative comparison.
+
+> **Headline finding:** `dataflow_only` no longer contributes 0% — it now
+> captures **over 100%** of `joint`'s gain over the best single-dataflow
+> baseline (130.2%, 104.4%), essentially matching `tiling_only` and `joint`
+> themselves. All three variants are now statistically indistinguishable from
+> each other (paired tests, all p > 0.23). The thesis's "joint dataflow+tiling
+> learning" question, at this budget, now has a different answer than §8's: not
+> "tiling alone explains everything," but "either factor alone, on the
+> per-stage action space, already captures essentially all of the achievable
+> gain — the two factors are no longer distinguishable in their contribution."
+
+**Method:** identical to §3 (same 2 cells: seq128@16×16, seq256@32×32; same 5
+seeds; same 6-iteration budget) — only the action space differs, and
+`tiling_only`'s fixed dataflow is now **per-stage** (looked up from Experiment
+3's real `best_fixed_per_stage` per-stage winners for each cell, not one global
+`os_only` string — see `run_exp5.py`'s docstring for why this is the more
+meaningful reference now that dataflow varies per stage). `joint` is `a2c`
+(the current selection, `exp0_stats.md` §11), reused from
+`results/raw/exp3_perstage.csv`, not `bayesian_opt`.
+
+**A real invocation mistake caught and fixed, not hidden:** the first attempt
+at this re-run defaulted to the same output filename (`results/raw/exp5.csv`)
+as the original run and was launched without an explicit `--out`, appending
+120 new rows onto the 120 original (3-dim) rows in the same file. Caught before
+analysis by inspecting `git_commit` values (two distinct commits present in one
+file); the two batches were cleanly split by `git_commit` back into the
+original `exp5.csv` (restored via `git checkout`, verified byte-identical to
+its last commit) and a new `results/raw/exp5_perstage.csv` (120 rows, the real
+per-stage data). No data was lost or corrupted — this was a filename-collision
+bookkeeping mistake, not a data-quality problem.
+
+```bash
+python experiments/exp5_ablation/run_exp5.py --out results/raw/exp5_perstage.csv
+python experiments/exp5_ablation/analyze_exp5.py \
+  --exp5-raw-csv results/raw/exp5_perstage.csv --exp3-raw-csv ../exp3_main_sweep/results/raw/exp3_perstage.csv \
+  --out-prefix exp5_perstage --joint-optimizer-name a2c
+```
+
+### 11a. Results
+
+**Per-variant utilization (%), n=5 seeds** (`results/processed/exp5_perstage_ablation_summary.csv`):
+
+| Cell | Best single-dataflow (`os_only`) | `best_fixed_per_stage` (context) | `dataflow_only` (mean ± std) | `tiling_only` (mean ± std) | `joint` (mean ± std) |
+|---|---|---|---|---|---|
+| seq128 @ 16×16 | 89.960 | 91.892 | 91.843 ± 0.735 | 92.222 ± 0.153 | 91.406 ± 1.716 |
+| seq256 @ 32×32 | 78.910 | 87.451 | 86.741 ± 0.972 | 87.863 ± 0.209 | 86.408 ± 2.244 |
+
+`dataflow_only`'s std is **no longer zero** (was exactly 0 in §4) — real,
+mechanistic explanation: the per-stage dataflow space has `3^3 = 27` discrete
+combinations (was 3), and a 6-trial budget no longer exhaustively covers it, so
+different seeds land on different local optima. `tiling_only` has the lowest
+variance and highest mean of the three variants in both cells — it numerically
+**beats** `best_fixed_per_stage` itself (92.22 > 91.89; 87.86 > 87.45).
+
+**Gain attribution** (relative to `best_single_dataflow` — **kept as the same
+reference as §4** for direct comparability, not switched to
+`best_fixed_per_stage`; see 11a's own note below for why):
+
+| Cell | `joint` gain (pct. points) | `dataflow_only` gain | `dataflow_only` % of joint gain | `tiling_only` gain | `tiling_only` % of joint gain |
+|---|---|---|---|---|---|
+| seq128 @ 16×16 | 1.446 | 1.883 | **130.2%** (was 0.0%) | 2.262 | **156.4%** (was 117.2%) |
+| seq256 @ 32×32 | 7.499 | 7.832 | **104.4%** (was 0.0%) | 8.954 | **119.4%** (was 116.7%) |
+
+**[NOTE on baseline choice]** `best_fixed_per_stage` was tried as the
+gain-attribution reference first (matching `tiling_only`'s own now-per-stage
+fixed-dataflow prior) but produces a **degenerate result**: since `joint` no
+longer reliably beats `best_fixed_per_stage` (`exp3_stats.md` §11 — 0/4 cells
+significant, numerically below it in both of these 2 cells), `joint_gain` is
+*negative* against that reference, making "% of joint's gain" sign-flip into
+confusing negative percentages for a plainly *positive* `tiling_only` gain.
+Verified by computing it before deciding not to use it (real evidence, not
+assumed) — kept `os_only` as the reference instead, exactly preserving §4's
+methodology so the 0%→130%/104% comparison is apples-to-apples.
+`best_fixed_per_stage`'s utilization is still reported alongside (11a's table)
+as informative context.
+
+**Significance** (`results/processed/exp5_perstage_significance.csv`; paired
+by seed, same convention as §5):
+
+| Cell | Comparison | t, p | Wilcoxon p |
+|---|---|---|---|
+| seq128 @ 16×16 | tiling_only vs. joint | t=1.05, p=0.355 | p=0.4375 |
+| seq128 @ 16×16 | dataflow_only vs. joint | t=0.51, p=0.634 | p=1.0000 |
+| seq256 @ 32×32 | tiling_only vs. joint | t=1.38, p=0.239 | p=0.4375 |
+| seq256 @ 32×32 | dataflow_only vs. joint | t=0.32, p=0.767 | p=1.0000 |
+
+**Neither `tiling_only` nor `dataflow_only` differs significantly from
+`joint`, in either cell** (all p > 0.23) — despite `dataflow_only` now having
+real variance to test (unlike §5, where its zero variance made a test
+inapplicable).
+
+**Figure:** `results/figures/exp5_perstage_ablation_bars.png` (+`.svg`) — same
+plot as §7, new-action-space data.
+
+### 11b. Interpretation
+
+- **[RESULT]** `dataflow_only` captures over 100% of `joint`'s gain in both
+  cells (130.2%, 104.4%) — a complete reversal of §8's headline "exactly 0%"
+  finding, directly answering `docs/NEXT_INSTRUCTIONS.md` item 1's first
+  question.
+- **[RESULT]** `joint` does not significantly beat `tiling_only` (unchanged
+  from §5 — still not significant, p=0.24–0.36 now vs. p=0.32–0.62 before) —
+  directly answering item 1's second question: no, it still doesn't, now
+  extended to `dataflow_only` too (also not significant, p=0.63–0.77).
+- **[INTERPRETATION] — the central finding of this re-run.** On the per-stage
+  action space, `dataflow_only`, `tiling_only`, and `joint` are all
+  **statistically indistinguishable** from each other. This is a genuinely
+  different conclusion from §8's, not a stronger or weaker version of it: §8
+  found tiling explains *all* of the gain and dataflow explains *none*; this
+  re-run finds *either* factor alone, searched with the per-stage granularity
+  `best_fixed_per_stage` already had, already captures essentially all of the
+  achievable gain at this budget — the two factors are no longer separable by
+  their contribution. Combined with `exp3_stats.md` §11's finding that the
+  optimizer now matches (not beats) `best_fixed_per_stage`, the coherent
+  picture is: **per-stage dataflow choice was the real missing capability**
+  (§8's own `exp3_stats.md`-referenced concrete recommendation) — once any
+  search method has access to it (whether searching dataflow alone, tiling
+  alone with dataflow correctly fixed per-stage, or both jointly), it reaches
+  essentially the same ceiling.
+- **[RESULT]** `tiling_only` numerically *beats* `best_fixed_per_stage` itself
+  in both cells (92.22% > 91.89%; 87.86% > 87.45%) — a real, if small,
+  additional finding: a per-stage-correct dataflow prior plus a *learned*
+  (rather than default equal-split) SRAM partition can exceed the exhaustive
+  per-stage-EDP-optimal static baseline. Not tested for significance here
+  (not one of item 1's explicit questions) — flagged as a real observation
+  worth a dedicated significance check if this becomes a thesis claim.
+- **[LIMITATION]** Same 2-of-4-cells scope as §9 — the seq_len=512 cell where
+  the best static dataflow itself changes (`exp4_stats.md`) remains untested
+  for this ablation; still a natural, informative follow-up, now doubly so
+  given how much the per-stage redesign changed this experiment's answer.
+- **[LIMITATION]** n=5 seeds — same underpowered-for-small-effects caveat as
+  §9's own limitation.
+- **[LIMITATION]** `dram_bandwidth_bytes_per_cycle` unsimulated,
+  `energy_per_cycle_pj` a placeholder — identical caveat to §9.
+
 ## 9. Limitations & Reasons for Discrepancy
 
 - **The central, disclosed limitation is that "joint captures more gain than either factor alone" — the plan's implicit expectation for this kind of ablation — is NOT what this data shows.** `dataflow_only` captures none of the gain and `tiling_only` alone statistically matches `joint`. This is reported as the real finding, not softened or reframed as a partial success.
