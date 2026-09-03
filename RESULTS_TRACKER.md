@@ -39,9 +39,9 @@ A2C in its place (documented in `common/optimizers/a2c.py`).
 | 0 | Optimizer bake-off | 🟢 Complete | 2026-08-31 (re-examined 2026-09-02) | **Re-examined on the per-stage action space; selection changed to A2C.** On the new 9-dim action space, `bayesian_opt` had the *worst* mean final reward of the 4 candidates (reversed from the original 3-dim finding); `a2c`/`ppo` now tie for best. See `exp0_stats.md` §11 | [exp0_stats.md](experiments/exp0_optimizer_bakeoff/exp0_stats.md) |
 | 1 | Array-size sensitivity | 🟢 Complete | 2026-09-01 | 16×16/32×32 justified mechanistically: the utilization "knee" tracks `head_dim`, not `seq_len` — a stated prediction (doubling head_dim 32→64 shifts the knee one array-size doubling higher) confirmed by a dedicated run (see [Justified array sizes](#justified-array-sizes) below) | [exp1_stats.md](experiments/exp1_array_sensitivity/exp1_stats.md) |
 | 2 | Search/training convergence | 🟢 Complete | 2026-09-01 | 5/5 seeds converged (mean iter 4.00, std 0.00) by a pre-stated criterion; a 10× stricter ε changed nothing — a structural criterion limitation (early-trial clustering), not a tuning gap. Exp 3 uses fixed budgets, not early-stopping, as a result | [exp2_stats.md](experiments/exp2_convergence/exp2_stats.md) |
-| 3 | Main sweep vs. baselines | 🟢 Complete | 2026-09-01 | `bayesian_opt` loses to `best_fixed_per_stage` significantly in all 4 cells (−1.9% to −9.1%) but beats the best single-dataflow baseline significantly in all 4 (+0.2% to +0.8%) — a real action-space asymmetry, not a search failure: the optimizer can't express per-stage dataflow choice (see §8 of the report) | [exp3_stats.md](experiments/exp3_main_sweep/exp3_stats.md) |
-| 4 | Scalability study | 🟢 Complete | 2026-09-01 | RQ3 answered: optimizer's advantage over best baseline shrinks and reverses at seq_len=512 (+0.2–0.8% → −1.6%, one seed missed the relocated optimum within the fixed 6-iter budget); cost grows substantially and faster on 16×16 than 32×32 | [exp4_stats.md](experiments/exp4_scalability/exp4_stats.md) |
-| 5 | Ablation study | 🟢 Complete | 2026-09-01 | `dataflow_only` captures 0% of the joint optimizer's gain over best-static (deterministic); `tiling_only` alone statistically matches `joint` (paired test not significant, p=0.32–0.62) — the thesis's real gain is attributable to tiling search, not joint learning, at this budget/action-space | [exp5_stats.md](experiments/exp5_ablation/exp5_stats.md) |
+| 3 | Main sweep vs. baselines | 🟡 In progress | 2026-09-01 (3-dim, below); **re-run on per-stage action space started 2026-09-02, not yet finished** | 3-dim (superseded) finding: `bayesian_opt` loses to `best_fixed_per_stage` significantly in all 4 cells (−1.9% to −9.1%) but beats the best single-dataflow baseline significantly in all 4 (+0.2% to +0.8%) — the real action-space asymmetry that motivated the per-stage redesign (see §8 of the report). **Per-stage re-run in progress** — see [Infrastructure incident](#infrastructure-incident-disk-exhaustion-pipeline-slowness-and-process-interruptions-2026-09-02) below for why it's taking multiple sessions | [exp3_stats.md](experiments/exp3_main_sweep/exp3_stats.md) |
+| 4 | Scalability study | 🟡 Blocked on Exp 3 re-run | 2026-09-01 (3-dim, below) | 3-dim (superseded) finding: RQ3 answered: optimizer's advantage over best baseline shrinks and reverses at seq_len=512 (+0.2–0.8% → −1.6%, one seed missed the relocated optimum within the fixed 6-iter budget); cost grows substantially and faster on 16×16 than 32×32. **Per-stage re-run not started** (`docs/NEXT_INSTRUCTIONS.md` item 5 — waits on Exp 3/5) | [exp4_stats.md](experiments/exp4_scalability/exp4_stats.md) |
+| 5 | Ablation study | 🔴 Not started (per-stage) | 2026-09-01 (3-dim, below) | 3-dim (superseded) finding: `dataflow_only` captures 0% of the joint optimizer's gain over best-static (deterministic); `tiling_only` alone statistically matches `joint` (paired test not significant, p=0.32–0.62) — the thesis's real gain is attributable to tiling search, not joint learning, at this budget/action-space. **Per-stage re-run not started** (`docs/NEXT_INSTRUCTIONS.md` item 4) | [exp5_stats.md](experiments/exp5_ablation/exp5_stats.md) |
 | 6 | Generalization test (stretch) | 🔴 Not started | — | — | [exp6_stats.md](experiments/exp6_generalization/exp6_stats.md) |
 
 Status legend: 🔴 Not started · 🟡 In progress · 🟢 Complete (stats.md finalized) · ⚫ Failed/blocked (see notes)
@@ -51,6 +51,124 @@ Status legend: 🔴 Not started · 🟡 In progress · 🟢 Complete (stats.md f
 ## Per-stage action space
 
 Set 2026-09-02, per `docs/NEXT_INSTRUCTIONS.md` item 1 — `common/optimizers/environment.py`'s `AttentionMappingProblem.evaluate()` was rewritten to apply one `(dataflow_mode, SRAM-split)` choice **per GEMM stage** (`qkv_projection`, `qk_transpose`, `score_times_v`) instead of one global choice for the whole workload, matching the granularity `common.baselines.static_heuristics.best_fixed_per_stage_mapping` already used. Real cause of Experiment 3/5's central findings below (optimizer structurally couldn't express or compete with a per-stage baseline). Every optimizer's search space widened from 3 to 9 real values (`decode_raw_action`); `evaluate()` now runs 3 real simulator calls per candidate instead of 1. Full detail, including the new `brute_force.py` per-stage-independent grid-search design (and its [LIMITATION] as an approximation, not a guaranteed global optimum) in the commit message and `common/optimizers/environment.py`'s module docstring. This is why Experiment 0's selection was re-examined (below) and why Experiments 3–5 are being re-run (see `docs/NEXT_INSTRUCTIONS.md`).
+
+## Infrastructure incident: disk exhaustion, pipeline slowness, and process interruptions (2026-09-02)
+
+Real, technical account of why the per-stage Experiment 3 re-run has taken
+multiple sessions/restarts instead of one continuous run — kept here rather than
+in a commit message because it directly explains the unusual wall-clock time and
+the gaps in `results/raw/exp3_perstage.csv`'s timestamps.
+
+**1. Root cause of a real system crash: SCALE-Sim was writing megabytes of unused
+trace files per call.** A first per-stage Exp 3 re-run attempt filled the disk —
+`results/raw/_scratch/` reached **59GB** partway through one sweep, exhausted
+available disk space (down to ~120MB free), and took Docker Desktop's daemon down
+with it (`ENOSPC` during container churn). Diagnosed by reading the installed
+`scalesim==3.0.0` package source directly inside the built image: `scale.py`'s own
+`-s`/save-trace CLI flag (default `"Y"`) is parsed into a local `save_space`
+variable but **never passed to the `scalesim` object it constructs** —
+`save_disk_space=False` is hardcoded on that call (a real upstream bug, not a usage
+error on this project's side). Every real run was therefore writing full per-cycle
+`layer*/{IFMAP,FILTER,OFMAP}_{SRAM,DRAM}_TRACE.csv` files — measured up to **~430MB
+for a single (stage, dataflow) candidate** at `seq_len=256`/`head_dim=64` — that
+`common/simulator_interface.py::_parse_scale_sim_report` never reads (only
+`COMPUTE_REPORT.csv` and `DETAILED_ACCESS_REPORT.csv`, both a few hundred bytes).
+**Fix:** `docker/scalesim/Dockerfile` now patches the installed `scale.py` with a
+one-line `sed` (`save_disk_space=False` → `save_disk_space=save_space`) — a
+verified, minimal fix to a real vendored bug, not a fork of the package.
+**Measured, real, before/after** on the identical workload/action: scratch output
+per `evaluate()` call dropped **550MB → 144KB (~3800×)**; wall-clock dropped
+**~81s → ~67-68s (~16-18%)** — trace writing was overwhelmingly a *storage*
+problem and only secondarily a *speed* one. Full detail and the exact patch:
+commit `08e8176` ("Fix real disk-space/slowness bug...").
+
+**2. A smaller, also-real per-call cost, fixed alongside it.**
+`run_scale_sim` ran a full `docker info` daemon healthcheck (measured ~0.6s)
+before *every single* real simulation call — with the per-stage action space
+already tripling calls per `evaluate()` (1 → 3), this was paid 3× as often as
+before the redesign. Memoized per-process instead (checked once, not once per
+call); a genuine mid-sweep daemon loss is still caught distinctly from a real
+simulation failure via a stderr-pattern check that resets the memoized flag and
+re-raises loudly. Same commit as above; unit-tested in `tests/test_simulator_interface.py`.
+
+**3. Why the per-stage action space is *inherently* ~3× more expensive per
+`evaluate()` call — a real, accepted methodological cost, not a bug.** The
+redesign (`common/optimizers/environment.py`, 2026-09-02) runs one real SCALE-Sim
+invocation per GEMM stage (3 stages) instead of one for the whole workload, to let
+the optimizer actually express per-stage dataflow choice (the real cause of
+Experiment 3/5's original central finding — see
+[Per-stage action space](#per-stage-action-space) above). This roughly triples
+real Docker/SCALE-Sim calls per candidate evaluated, which is the dominant,
+irreducible driver of Experiment 3's per-seed wall-clock now — accepted
+deliberately (re-timed before committing to a budget, per this project's standing
+discipline), not something further pipeline tuning should try to remove.
+
+**4. The dominant driver of *calendar* time, distinct from per-call speed:
+long background sweeps did not survive session boundaries.** The corrected Exp 3
+re-run was interrupted **twice** after the disk-space fix landed — once when
+Docker Desktop's daemon was lost again (unrelated to disk this time — a session
+continuity event killed the backend process, confirmed by `docker info` timing
+out with no disk-space signal present) and once when the `nohup`'d sweep process
+itself (and its accompanying disk-space safety `Monitor`) had no completion
+record after a session compaction/restart, despite `disown`ing it. Each
+interruption required manually restarting Docker Desktop and re-launching the
+sweep. **Real, honest consequence:** ~10 rows of one (workload, hardware,
+optimizer, seed) cell were logged mid-flight before an interruption and had to be
+discarded and redone (not corrupted data, just an incomplete attempt that would
+have skewed per-seed aggregation if kept alongside a clean re-run of the same
+seed) — `run_exp3.py`'s existing per-row incremental logging meant only that one
+partial cell's progress was lost, not the whole sweep (seq_len=128's two cells,
+~40 minutes of real compute, survived both interruptions intact in
+`results/raw/exp3_perstage.csv`). **Lesson for future large sweeps in this
+environment:** do not assume a multi-hour background process survives
+uninterrupted across a session; either check on long sweeps periodically with an
+active monitor (as done for the corrected re-run) rather than a single long wait,
+or split a sweep into smaller per-cell invocations against the same `--out` CSV
+so an interruption only costs one cell's partial progress, never more.
+
+**Net effect on results already reported:** none of the above changes any
+*computed* metric (trace-file suppression removes only unused byproduct files;
+the daemon-check memoization and process interruptions are pipeline/operational
+concerns, not simulation logic) — Experiments 0–2's finalized numbers are
+unaffected. It solely explains why the per-stage Experiment 3/4/5 re-run
+(`docs/NEXT_INSTRUCTIONS.md` items 3–5) has taken substantially longer in
+wall-clock/calendar time than the original 3-dim runs did.
+
+**Going forward: standing storage/memory discipline for every remaining
+experiment (items 2–6), not just a one-time cleanup.**
+- **Check disk headroom before committing to any sweep's full budget**, the same
+  way per-call *timing* is already re-measured before every new grid (established
+  practice since Experiment 1) — a quick `df -h /` plus a real one-cell scratch-size
+  sample, not an assumption. With the trace-file fix, per-`evaluate()` scratch is
+  now ~144KB (was ~550MB) — three orders of magnitude of headroom recovered, but
+  headroom is not infinite, and the daemon-crash mode above shows the failure isn't
+  graceful when it's exceeded.
+- **`results/raw/_scratch/` is regenerable and `.gitignore`'d by design** — safe to
+  delete between sweeps once a sweep's raw CSV rows are safely logged (the CSV, not
+  the scratch dir, is the real result — established since this project's first
+  Docker integration). Delete it proactively after a large sweep completes, rather
+  than letting it accumulate across multiple experiments' runs unnoticed.
+- **Docker's own image/container footprint should stay minimal**: only
+  `scalesim:latest` (currently ~884MB) is needed for this project. Two unrelated
+  images from an old, separate "moodle-test" project (`mariadb:10.11`,
+  `moodlehq/moodle-php-apache:8.2`, ~1.73GB combined, last used 6 months prior)
+  were found alongside it on 2026-09-02 and removed with the user's confirmation —
+  worth a periodic `docker images -a` / `docker system df` check so unrelated
+  images don't quietly accumulate again. Build cache (`docker builder prune`) is
+  always safe to clear between rebuilds — it's fully reclaimable by design.
+- **The ~430GB of non-project disk usage found on 2026-09-02** (this project +
+  Docker together account for only a few GB) is outside this project's or Docker's
+  footprint entirely and was left untouched — not this project's data to manage,
+  and out of scope for these sweeps' own storage discipline, but worth the user's
+  own separate attention if disk headroom becomes tight again.
+- **Prefer resumable, checkpointed sweeps over one long unattended run**: this
+  incident's point 4 above (background processes not reliably surviving session
+  boundaries) means a very long single invocation risks losing more progress than
+  a sweep split into smaller `--workload-names`/`--hardware-names` slices against
+  the same `--out` CSV, or one actively monitored (as the corrected Exp 3 re-run
+  now is) rather than a single long blind wait.
+
+---
 
 ## Selected optimizer
 
@@ -166,4 +284,4 @@ whether anything failed.
 
 ---
 
-_Last updated: 2026-09-01 (Experiments 0–5 complete. Exp 3 found a real action-space asymmetry (optimizer beats fair single-dataflow baselines, loses to per-stage-specialized best_fixed_per_stage); Exp 4 answered RQ3 (advantage shrinks/reverses and cost grows as seq_len scales, under the fixed small budget); Exp 5 found the optimizer's real gain is attributable to tiling search alone, not joint dataflow+tiling learning, at this budget/action-space — all three findings point at the same concrete follow-up (extend the action space to per-stage dataflow, and re-test with a larger budget). Experiment 6 (optional/stretch) not started)._
+_Last updated: 2026-09-02. Experiments 0–2 complete and unaffected by the per-stage redesign. Experiment 0 re-examined on the new 9-dim per-stage action space and selection changed to `a2c` (§ above). Experiments 3–5's 3-dim-action-space findings (below, in "Per-experiment summary") are superseded-pending-re-run, not wrong — they're exactly what motivated the per-stage redesign. Experiment 3's per-stage re-run is in progress, delayed by a real infrastructure incident (disk exhaustion from an unused-trace-file bug in SCALE-Sim itself, now fixed; two background-process interruptions from session boundaries) — see [Infrastructure incident](#infrastructure-incident-disk-exhaustion-pipeline-slowness-and-process-interruptions-2026-09-02) above for the full technical account and the storage/memory discipline adopted going forward. Experiments 4–5's per-stage re-runs have not started (blocked on Experiment 3 per `docs/NEXT_INSTRUCTIONS.md`'s stated ordering). Experiment 6 (optional/stretch) not started._
