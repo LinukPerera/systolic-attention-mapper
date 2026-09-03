@@ -13,6 +13,7 @@ exp3_stats.md, never blended into these numbers (plan §6).
 """
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -23,6 +24,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 import numpy as np
 import pandas as pd
+import yaml
 from scipy import stats
 
 from common.metrics import pct_diff_vs_baseline
@@ -40,8 +42,28 @@ def _cell_label(seq_len: int, array_rows: int) -> str:
     return f"seq{seq_len} @ {array_rows}x{array_rows}"
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--raw-csv", type=str, default=str(RAW_CSV))
+    # See analyze_exp0.py's --out-prefix for why: keeps a new-action-space re-run's
+    # outputs (e.g. "exp3_perstage") from colliding with the original run's.
+    parser.add_argument("--out-prefix", type=str, default="exp3")
+    # Which optimizer's rows to treat as "the optimizer" -- defaults to whatever
+    # config/optimizers/selected.yaml currently names (read dynamically, same as
+    # run_exp3.py, rather than hardcoded -- see that script's _load_selected_optimizer
+    # docstring for why: the selection changed once already, 2026-09-02).
+    parser.add_argument("--optimizer-name", type=str, default=None)
+    return parser.parse_args()
+
+
 def main() -> None:
-    df = pd.read_csv(RAW_CSV)
+    args = parse_args()
+    optimizer_name = args.optimizer_name
+    if optimizer_name is None:
+        with open(_PROJECT_ROOT / "config" / "optimizers" / "selected.yaml") as f:
+            optimizer_name = yaml.safe_load(f)["selected_optimizer"]
+
+    df = pd.read_csv(args.raw_csv)
     df["cell"] = df.apply(lambda r: _cell_label(r["seq_len"], r["array_rows"]), axis=1)
 
     # --- Baseline table: one row per (cell, method), status included even if FAILED ---
@@ -49,10 +71,17 @@ def main() -> None:
     baseline_summary = baselines[["cell", "seq_len", "array_rows", "optimizer", "status",
                                    "pe_utilization_pct", "exec_cycles", "sram_dram_traffic_bytes", "edp"]]
     baseline_summary = baseline_summary.rename(columns={"optimizer": "method"})
-    baseline_summary.to_csv(PROCESSED_DIR / "exp3_baseline_summary.csv", index=False)
+    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+    baseline_summary.to_csv(PROCESSED_DIR / f"{args.out_prefix}_baseline_summary.csv", index=False)
 
     # --- Optimizer: per (cell, seed), the iteration with max reward is that seed's "result" ---
-    opt = df[df["optimizer"] == "bayesian_opt"].copy()
+    opt = df[df["optimizer"] == optimizer_name].copy()
+    if opt.empty:
+        raise ValueError(
+            f"No rows with optimizer=={optimizer_name!r} in {args.raw_csv} -- pass --optimizer-name "
+            "explicitly if this CSV used a different optimizer than config/optimizers/selected.yaml "
+            "currently names."
+        )
     opt = opt[opt["status"] == "OK"]
     opt["reward"] = opt["notes"].apply(lambda s: json.loads(s)["reward"])
     best_per_seed = opt.loc[opt.groupby(["cell", "seed"])["reward"].idxmax()]
@@ -106,7 +135,7 @@ def main() -> None:
             else:
                 t_stat = t_p = w_stat = w_p = cohens_d = float("nan")
             sig_rows.append({
-                "cell": cell, "n_seeds": n, "comparison": f"bayesian_opt vs. {label} ({baseline_row['method']})",
+                "cell": cell, "n_seeds": n, "comparison": f"{optimizer_name} vs. {label} ({baseline_row['method']})",
                 "t_statistic": t_stat, "t_pvalue": t_p, "wilcoxon_statistic": w_stat, "wilcoxon_pvalue": w_p,
                 "cohens_d": cohens_d, "significant_at_0.05": bool(t_p < 0.05) if not np.isnan(t_p) else None,
                 "optimizer_wins": bool(mean_util > baseline_util),
@@ -115,26 +144,26 @@ def main() -> None:
 
     summary = pd.DataFrame(rows)
     significance = pd.DataFrame(sig_rows)
-    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-    summary.to_csv(PROCESSED_DIR / "exp3_optimizer_vs_baseline.csv", index=False)
-    significance.to_csv(PROCESSED_DIR / "exp3_significance.csv", index=False)
+    summary.to_csv(PROCESSED_DIR / f"{args.out_prefix}_optimizer_vs_baseline.csv", index=False)
+    significance.to_csv(PROCESSED_DIR / f"{args.out_prefix}_significance.csv", index=False)
 
     # --- Figures ---
     heatmap_df = pd.concat([
         baseline_summary[baseline_summary["status"] == "OK"][["cell", "method", "pe_utilization_pct"]],
-        best_per_seed.assign(method="bayesian_opt").groupby(["cell", "method"])["pe_utilization_pct"].mean().reset_index(),
+        best_per_seed.assign(method=optimizer_name).groupby(["cell", "method"])["pe_utilization_pct"].mean().reset_index(),
     ])
     FIGURES_DIR.mkdir(parents=True, exist_ok=True)
-    plot_utilization_heatmap(heatmap_df, FIGURES_DIR / "exp3_utilization_heatmap")
+    plot_utilization_heatmap(heatmap_df, FIGURES_DIR / f"{args.out_prefix}_utilization_heatmap")
     for label in ("best_overall", "best_single_dataflow"):
         bars_df = summary.rename(columns={
             f"{label}_pct_improvement_mean": "pct_improvement_mean", f"{label}_pct_improvement_ci": "pct_improvement_ci",
         })[["cell", "pct_improvement_mean", "pct_improvement_ci"]].fillna(0)
-        plot_pct_improvement_bars(bars_df, FIGURES_DIR / f"exp3_pct_improvement_bars_vs_{label}")
+        plot_pct_improvement_bars(bars_df, FIGURES_DIR / f"{args.out_prefix}_pct_improvement_bars_vs_{label}")
 
-    print(f"[analyze_exp3] wrote {PROCESSED_DIR}/exp3_{{baseline_summary,optimizer_vs_baseline,significance}}.csv")
-    print(f"[analyze_exp3] wrote {FIGURES_DIR}/exp3_utilization_heatmap.png/.svg and "
-          f"exp3_pct_improvement_bars_vs_{{best_overall,best_single_dataflow}}.png/.svg")
+    print(f"[analyze_exp3] optimizer_name={optimizer_name!r}")
+    print(f"[analyze_exp3] wrote {PROCESSED_DIR}/{args.out_prefix}_{{baseline_summary,optimizer_vs_baseline,significance}}.csv")
+    print(f"[analyze_exp3] wrote {FIGURES_DIR}/{args.out_prefix}_utilization_heatmap.png/.svg and "
+          f"{args.out_prefix}_pct_improvement_bars_vs_{{best_overall,best_single_dataflow}}.png/.svg")
     print()
     print("=== Baseline summary (status==OK only) ===")
     print(baseline_summary[baseline_summary["status"] == "OK"].pivot(index="cell", columns="method", values="pe_utilization_pct").to_string())

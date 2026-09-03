@@ -13,9 +13,10 @@ config/workloads/exp3_seq*.yaml files' own comments for the exact measurements.
 
 For each (workload, array) cell: all four static baselines (via
 common.baselines.static_heuristics.evaluate_all_baselines, shared with
-run_exp1.py) run once each (deterministic), and the selected optimizer
-(bayesian_opt, from config/optimizers/selected.yaml -- not re-decided) runs for
-N_ITERATIONS across >=5 seeds. Per Experiment 2's finding
+run_exp1.py) run once each (deterministic), and the selected optimizer (read
+dynamically from config/optimizers/selected.yaml -- not re-decided here; a2c as
+of the 2026-09-02 per-stage-action-space re-examination, see exp0_stats.md §11)
+runs for N_ITERATIONS across >=5 seeds. Per Experiment 2's finding
 (exp2_stats.md §8a: the convergence criterion is fragile to early-trial
 clustering and unsuitable for dynamically stopping a run), every optimizer seed
 runs the SAME fixed, pre-timed iteration budget -- common.optimizers.convergence
@@ -32,6 +33,7 @@ exp1_head64_validation.yaml's 8x8) is logged as FAILED and the sweep continues
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import sys
 from datetime import datetime, timezone
@@ -46,9 +48,9 @@ import yaml
 from common import logging_utils
 from common.baselines.static_heuristics import evaluate_all_baselines
 from common.metrics import compute_edp
-from common.optimizers.bayesian_opt import BayesianOptOptimizer
+from common.optimizers.base import DataflowTilingOptimizer
 from common.optimizers.convergence import best_reward_so_far, convergence_iteration
-from common.optimizers.environment import AttentionMappingProblem
+from common.optimizers.environment import STAGE_NAMES, AttentionMappingProblem
 from common.simulator_interface import HardwareConfig, SimulationResult, load_hardware_config
 from common.workload_gen import AttentionWorkload, load_workload_yaml
 
@@ -63,19 +65,26 @@ DEFAULT_HARDWARE_NAMES = ["16x16", "32x32"]  # Experiment 1's two mechanisticall
 SELECTED_OPTIMIZER_YAML = _PROJECT_ROOT / "config" / "optimizers" / "selected.yaml"
 
 
-def _load_selected_optimizer() -> BayesianOptOptimizer:
+def _load_selected_optimizer() -> tuple[str, DataflowTilingOptimizer]:
+    """Instantiate whichever optimizer config/optimizers/selected.yaml currently
+    names, via its own module/class fields -- **revised 2026-09-02** (was
+    hardcoded to bayesian_opt; Experiment 0's re-examination on the per-stage
+    action space changed the selection to a2c, see exp0_stats.md §11). Reads the
+    selection dynamically rather than hardcoding a name a second time, so this
+    script doesn't go stale again if the selection changes further.
+
+    Returns:
+        (selected_optimizer_name, instance) -- the name is used as the CSV
+        `optimizer` column value everywhere below, instead of a hardcoded string.
+    """
     with open(SELECTED_OPTIMIZER_YAML) as f:
         selected = yaml.safe_load(f)
-    if selected["selected_optimizer"] != "bayesian_opt":
-        raise ValueError(
-            f"config/optimizers/selected.yaml names {selected['selected_optimizer']!r}, but "
-            "run_exp3.py only knows how to instantiate bayesian_opt -- update this function "
-            "(not the selection) if Experiment 0's choice changes."
-        )
+    module = importlib.import_module(selected["module"])
+    cls = getattr(module, selected["class"])
     hp_path = _PROJECT_ROOT / selected["hyperparameters_file"]
     with open(hp_path) as f:
         hp = yaml.safe_load(f) or {}
-    return BayesianOptOptimizer(**hp)
+    return selected["selected_optimizer"], cls(**hp)
 
 
 def _base_row(
@@ -169,27 +178,33 @@ def main() -> None:
                     print(f"[exp3]   best_fixed_per_stage: status=FAILED (no winner for {missing})")
 
                 # --- Optimizer: fixed budget per seed (see module docstring for why not dynamic) ---
+                optimizer_name, _ = _load_selected_optimizer()
                 for seed in args.seeds:
                     problem = AttentionMappingProblem(
                         workload, hardware, traffic_penalty_weight=0.01, failed_run_penalty_reward=-1000.0,
-                        scratch_dir=cell_scratch / "bayesian_opt" / f"seed{seed}",
+                        scratch_dir=cell_scratch / optimizer_name / f"seed{seed}",
                     )
-                    optimizer = _load_selected_optimizer()
+                    _, optimizer = _load_selected_optimizer()  # fresh instance per seed (some hold internal state)
                     results = optimizer.run(problem, n_iterations=args.n_iterations, seed=seed)
                     for i, r in enumerate(results):
-                        notes = {
-                            "ifmap_frac": round(r.action.ifmap_frac, 4), "filter_frac": round(r.action.filter_frac, 4),
-                            "ofmap_frac": round(r.action.ofmap_frac, 4), "reward": round(r.reward, 6),
-                            "sim_notes": r.simulation.notes,
+                        per_stage = {
+                            name: {
+                                "dataflow_mode": sa.dataflow_mode,
+                                "ifmap_frac": round(sa.ifmap_frac, 4), "filter_frac": round(sa.filter_frac, 4),
+                                "ofmap_frac": round(sa.ofmap_frac, 4),
+                            }
+                            for name, sa in r.action.stages.items()
                         }
+                        dataflow_summary = "-".join(r.action.stages[name].dataflow_mode for name in STAGE_NAMES)
+                        notes = {"stages": per_stage, "reward": round(r.reward, 6), "sim_notes": r.simulation.notes}
                         logging_utils.append_run_row(csv_path, _base_row(
-                            method="bayesian_opt", hardware=hardware, workload=workload,
-                            dataflow_mode=r.action.dataflow_mode, seed=seed, iteration=i,
+                            method=optimizer_name, hardware=hardware, workload=workload,
+                            dataflow_mode=dataflow_summary, seed=seed, iteration=i,
                             result=r.simulation, git_commit=git_commit, notes=notes,
                         ))
                     rewards = [r.reward for r in results]
                     conv_iter = convergence_iteration(best_reward_so_far(rewards))  # uses shared defaults (window=5, epsilon=0.1)
-                    print(f"[exp3]   bayesian_opt seed={seed}: {len(results)} evals, "
+                    print(f"[exp3]   {optimizer_name} seed={seed}: {len(results)} evals, "
                           f"best reward={max(rewards):.3f}, convergence_iteration={conv_iter}")
 
             except Exception as e:
