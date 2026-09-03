@@ -1,39 +1,39 @@
 # Next Instructions for the Coding Agent
 
-Context for every item below lives in `RESULTS_TRACKER.md` (read that first,
-especially Experiments 3 and 5's summaries) — this file lists only what to do
-next, not why. Do not add narrative/history here; when a step is done, delete
-it from this file rather than marking it complete in place.
+Context lives in `RESULTS_TRACKER.md` (read that first — especially "Per-stage
+action space", the "Infrastructure incident" section, and Experiments 3-5's
+summaries). This file lists only what to do next, triaged by yield-per-compute
+given real time/CPU constraints (single core, ~108% load, slow). When an item
+is done, delete it from this file rather than marking it complete in place.
 
 ---
 
-## 3. Re-run Experiment 3 (main sweep) on the new action space
+## 1. Experiment 5 per-stage re-run (highest yield, do first)
 
-`config/optimizers/selected.yaml` now points to `a2c`, not `bayesian_opt` (Exp0
-was re-examined on the new action space — see `RESULTS_TRACKER.md`'s "Selected
-optimizer" section — use whatever it currently says, don't hardcode `a2c` either
-in case this changes again). Same grid as before (seq_len∈{128,256} ×
-array∈{16×16,32×32}, real, measured infeasibility of 512/1024 at 16×16 stands).
-Log to a new CSV (don't overwrite the existing `results/raw/exp3.csv`), re-run
-the significance tests, and check whether the selected optimizer now closes the
-gap with `best_fixed_per_stage`. Update `exp3_stats.md` with both the old and
-new action-space results, clearly labelled.
+Smallest remaining job (2 cells, same budget as the original run — no new
+iteration budget needed) and the most directly informative: it retests whether
+`dataflow_only` still captures 0% of the optimizer's gain now that Experiment
+3's per-stage re-run closed the gap with `best_fixed_per_stage`. This is
+likely the single most important remaining number for the thesis's "joint
+dataflow+tiling learning" claim. Log to a new CSV (don't overwrite the
+original), update `exp5_stats.md` with old vs. new results clearly labelled.
 
-## 4. Re-run Experiment 5 (ablation) on the new action space
+## 2. Experiment 4 per-stage re-run — scoped down
 
-Same 2 cells as before. Check whether `dataflow_only` now captures a nonzero
-share of `joint`'s gain, and whether `joint` significantly beats `tiling_only`
-now that dataflow is meaningfully searchable per-stage. Update `exp5_stats.md`
-accordingly, same old/new labelling convention as Experiment 3.
+Re-run at seq_len=512 using the **same 6-iteration budget as the original run**
+first (not a larger one) — this isolates whether the per-stage action space
+alone changes the seq_len=512 reversal finding, at the same cost as before.
+Only attempt a larger-budget follow-up afterward if time remains; do not
+combine both changes (action space + budget) in one run, or it becomes
+impossible to tell which change caused any difference. Log to a new CSV,
+update `exp4_stats.md`.
 
-## 5. Revisit Experiment 4 (scalability) after 3–4 land
+## 3. After 1-2 land
 
-Experiment 4 already flagged its own follow-up (larger iteration budget at
-seq_len=512, where the fixed 6-iteration budget missed the relocated optimum
-in one of five seeds) — fold that into this re-run rather than doing a third
-separate pass. Re-run at seq_len=512 on the new action space with a larger,
-justified iteration budget; update `exp4_stats.md`.
-
-## 6. Experiment 6 (generalization, optional/stretch)
-
-Only after 1–5 above are complete and documented, per the plan's own ordering.
+Update `RESULTS_TRACKER.md`'s status table and per-experiment summaries from
+the finalized `expN_stats.md` files, same handoff pattern as every prior step.
+At that point every experiment the thesis's core claims depend on (0, 1, 2, 3,
+5, and 4's seq_len=512 point) is on the per-stage action space, and the
+Results & Evaluation chapter can be written directly from `docs/stats/*.md` /
+each experiment's own `expN_stats.md` and figures, per `CODING_AGENT_PLAN.md`
+§7's definition of done.

@@ -42,7 +42,7 @@ A2C in its place (documented in `common/optimizers/a2c.py`).
 | 3 | Main sweep vs. baselines | 🟢 Complete (per-stage re-run) | 2026-09-01 (3-dim, superseded); **per-stage re-run completed 2026-09-03** | **Per-stage re-run closes the central gap**: `a2c` no longer loses significantly to `best_fixed_per_stage` in any of the 4 cells (was: significantly loses in all 4, p<0.0001 each) — statistically matches it now, numerically ahead in 1/4 cells. Still beats the best single-dataflow baseline significantly in 3/4 cells (2/4 survive Bonferroni), margins much larger than the 3-dim run (e.g. +0.70%→+9.50% at seq256@32×32). See `exp3_stats.md` §11 | [exp3_stats.md](experiments/exp3_main_sweep/exp3_stats.md) |
 | 4 | Scalability study | 🟡 Ready to re-run | 2026-09-01 (3-dim, below) | 3-dim (superseded) finding: RQ3 answered: optimizer's advantage over best baseline shrinks and reverses at seq_len=512 (+0.2–0.8% → −1.6%, one seed missed the relocated optimum within the fixed 6-iter budget); cost grows substantially and faster on 16×16 than 32×32. **Per-stage re-run not started** (`docs/NEXT_INSTRUCTIONS.md` item 5 — Exp 3 is now done, unblocking this) | [exp4_stats.md](experiments/exp4_scalability/exp4_stats.md) |
 | 5 | Ablation study | 🟡 Ready to re-run | 2026-09-01 (3-dim, below) | 3-dim (superseded) finding: `dataflow_only` captures 0% of the joint optimizer's gain over best-static (deterministic); `tiling_only` alone statistically matches `joint` (paired test not significant, p=0.32–0.62) — the thesis's real gain is attributable to tiling search, not joint learning, at this budget/action-space. **Per-stage re-run not started** (`docs/NEXT_INSTRUCTIONS.md` item 4 — Exp 3's own finding that the optimizer now matches `best_fixed_per_stage` makes this re-run's `dataflow_only`-captures-0%-of-gain question especially worth re-testing) | [exp5_stats.md](experiments/exp5_ablation/exp5_stats.md) |
-| 6 | Generalization test (stretch) | 🔴 Not started | — | — | [exp6_stats.md](experiments/exp6_generalization/exp6_stats.md) |
+| 6 | Generalization test (stretch) | 🔴 Deliberately skipped | 2026-09-03 (decision) | Default scope decision given real time constraints, per the plan's own "optional/stretch" framing — not silently dropped. See per-experiment summary below | [exp6_stats.md](experiments/exp6_generalization/exp6_stats.md) |
 
 Status legend: 🔴 Not started · 🟡 In progress · 🟢 Complete (stats.md finalized) · ⚫ Failed/blocked (see notes)
 
@@ -273,11 +273,24 @@ new interpretation here that isn't already in the source report.
 - **[LIMITATION]** Only 2 of Experiment 3's 4 cells tested, both where `os_only` is best-static; untested whether `dataflow_only` still contributes 0% at Experiment 4's seq_len=512 point, where the best static dataflow itself changes to `ws_only` — flagged as a natural, informative follow-up, along with re-running once the action space supports per-stage dataflow choice (Experiment 3's own recommended fix).
 
 ### Experiment 6 — Generalization test (optional/stretch)
-**Status:** 🔴 Not started
+**Status:** 🔴 Not started — **deliberately skipped, 2026-09-03 (default scope decision)**
 
-- **[RESULT]** —
-- **[INTERPRETATION]** —
-- **[LIMITATION]** —
+- **[DECISION]** `docs/NEXT_INSTRUCTIONS.md`'s own default, given real time constraints
+  this session (a single, memory-constrained 8GB-RAM/8-core machine, each real
+  per-stage sweep now costing on the order of hours — see
+  [Infrastructure incident](#infrastructure-incident-disk-exhaustion-pipeline-slowness-and-process-interruptions-2026-09-02)
+  above): skip Experiment 6 and record this as a deliberate, disclosed scope
+  decision, per the plan's own "optional/stretch, implement only after 0–5 are
+  done" framing (`CODING_AGENT_PLAN.md` §6) — not a silently dropped item. Every
+  experiment the thesis's core claims actually depend on (0–5) takes priority and
+  is either done or in progress on the per-stage action space; Experiment 6 was
+  always the plan's own stretch goal, not a required chapter.
+- **[LIMITATION]** This is a scope decision, not a finding — nothing about
+  generalization (to different `head_dim`, workload shapes, or hardware families
+  beyond this thesis's tested grid) is claimed or ruled out by skipping it. Stated
+  explicitly as future work in the thesis write-up, not silently omitted.
+- Revisit only if Experiments 4–5's per-stage re-runs finish with real session
+  time to spare, per `docs/NEXT_INSTRUCTIONS.md` item 3's own condition.
 
 ---
 

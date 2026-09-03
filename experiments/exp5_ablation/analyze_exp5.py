@@ -1,16 +1,17 @@
 """
 Analyze Experiment 5's ablation results: aggregates dataflow_only/tiling_only (this
-experiment's own results/raw/exp5.csv) alongside joint (bayesian_opt, reused from
-Experiment 3's results/raw/exp3.csv — see run_exp5.py's docstring for why not
+experiment's own results/raw/exp5*.csv) alongside joint (the selected optimizer,
+reused from Experiment 3's raw CSV -- see run_exp5.py's docstring for why not
 re-run), computes per-variant mean/std/95% CI utilization per cell, and states
 plainly how much of the total gain each factor contributes (plan §6 Exp 5's
 acceptance criteria). Produces the required bar chart with error bars.
 
-Every number here traces back to results/raw/exp5.csv or results/raw/exp3.csv —
-nothing is computed from anything else.
+Every number here traces back to results/raw/exp5*.csv or the Experiment 3 raw
+CSV it's pointed at -- nothing is computed from anything else.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -20,13 +21,16 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 import pandas as pd
+import yaml
 from scipy import stats
 
 from common.plotting.figures import plot_ablation_bars
 
 THIS_DIR = Path(__file__).parent
-EXP3_RAW_CSV = _PROJECT_ROOT / "experiments" / "exp3_main_sweep" / "results" / "raw" / "exp3.csv"
-EXP5_RAW_CSV = THIS_DIR / "results" / "raw" / "exp5.csv"
+DEFAULT_EXP3_RAW_CSV = (
+    _PROJECT_ROOT / "experiments" / "exp3_main_sweep" / "results" / "raw" / "exp3_perstage.csv"
+)
+DEFAULT_EXP5_RAW_CSV = THIS_DIR / "results" / "raw" / "exp5.csv"
 PROCESSED_DIR = THIS_DIR / "results" / "processed"
 FIGURES_DIR = THIS_DIR / "results" / "figures"
 
@@ -43,9 +47,28 @@ def _best_per_seed(df: pd.DataFrame, variant: str, seq_len: int, array_rows: int
     return best["pe_utilization_pct"]
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--exp5-raw-csv", type=str, default=str(DEFAULT_EXP5_RAW_CSV))
+    parser.add_argument("--exp3-raw-csv", type=str, default=str(DEFAULT_EXP3_RAW_CSV))
+    # See analyze_exp0.py's --out-prefix for why: keeps this re-run's outputs
+    # from colliding with the original (3-dim) exp5 run's.
+    parser.add_argument("--out-prefix", type=str, default="exp5")
+    parser.add_argument("--joint-optimizer-name", type=str, default=None,
+                         help="Which optimizer's rows in --exp3-raw-csv count as 'joint' -- defaults to "
+                              "whatever config/optimizers/selected.yaml currently names.")
+    return parser.parse_args()
+
+
 def main() -> None:
-    exp3 = pd.read_csv(EXP3_RAW_CSV)
-    exp5 = pd.read_csv(EXP5_RAW_CSV)
+    args = parse_args()
+    joint_optimizer_name = args.joint_optimizer_name
+    if joint_optimizer_name is None:
+        with open(_PROJECT_ROOT / "config" / "optimizers" / "selected.yaml") as f:
+            joint_optimizer_name = yaml.safe_load(f)["selected_optimizer"]
+
+    exp3 = pd.read_csv(args.exp3_raw_csv)
+    exp5 = pd.read_csv(args.exp5_raw_csv)
 
     cells = exp5[["seq_len", "array_rows"]].drop_duplicates().to_records(index=False)
 
@@ -55,13 +78,17 @@ def main() -> None:
         cell = _cell_label(seq_len, array_rows)
 
         # Best static baseline for this cell (from Experiment 3's real data) -- context, not a 4th bar.
+        # Per-stage revision: best_fixed_per_stage (not os_only) is the real best-static reference now,
+        # since tiling_only's dataflow is fixed to best_fixed_per_stage's own per-stage choice (see
+        # run_exp5.py's docstring) -- comparing gain against a weaker baseline than what tiling_only
+        # actually starts from would overstate every variant's "gain."
         baseline_row = exp3[(exp3["seq_len"] == seq_len) & (exp3["array_rows"] == array_rows)
-                             & (exp3["optimizer"] == "os_only") & (exp3["status"] == "OK")]
+                             & (exp3["optimizer"] == "best_fixed_per_stage") & (exp3["status"] == "OK")]
         best_static_util = baseline_row.iloc[0]["pe_utilization_pct"]
 
         variant_stats = {}
         for variant, source in [("dataflow_only", exp5), ("tiling_only", exp5), ("joint", exp3)]:
-            vals = _best_per_seed(source, "bayesian_opt" if variant == "joint" else variant, seq_len, array_rows)
+            vals = _best_per_seed(source, joint_optimizer_name if variant == "joint" else variant, seq_len, array_rows)
             n = len(vals)
             mean, std = vals.mean(), (vals.std(ddof=1) if n > 1 else float("nan"))
             ci = (stats.t.ppf(0.975, df=n - 1) * std / n ** 0.5) if n > 1 and std > 0 else 0.0
@@ -92,17 +119,20 @@ def main() -> None:
     bars_df = pd.DataFrame(bars_rows)
 
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-    summary.to_csv(PROCESSED_DIR / "exp5_ablation_summary.csv", index=False)
+    summary_path = PROCESSED_DIR / f"{args.out_prefix}_ablation_summary.csv"
+    summary.to_csv(summary_path, index=False)
 
     FIGURES_DIR.mkdir(parents=True, exist_ok=True)
-    plot_ablation_bars(bars_df, FIGURES_DIR / "exp5_ablation_bars")
+    fig_path = FIGURES_DIR / f"{args.out_prefix}_ablation_bars"
+    plot_ablation_bars(bars_df, fig_path)
 
-    print(f"[analyze_exp5] wrote {PROCESSED_DIR}/exp5_ablation_summary.csv")
-    print(f"[analyze_exp5] wrote {FIGURES_DIR}/exp5_ablation_bars.png/.svg")
+    print(f"[analyze_exp5] joint_optimizer_name={joint_optimizer_name!r}")
+    print(f"[analyze_exp5] wrote {summary_path}")
+    print(f"[analyze_exp5] wrote {fig_path}.png/.svg")
     print()
     print(summary[summary["variant"] != "_gain_attribution"].to_string(index=False))
     print()
-    print("=== Gain attribution (vs. best_static baseline) ===")
+    print("=== Gain attribution (vs. best_static baseline = best_fixed_per_stage) ===")
     print(summary[summary["variant"] == "_gain_attribution"].drop(
         columns=["variant", "n_seeds", "utilization_pct_mean", "utilization_pct_std", "utilization_pct_ci95"]
     ).to_string(index=False))
