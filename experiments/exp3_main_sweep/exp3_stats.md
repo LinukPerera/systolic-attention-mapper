@@ -137,3 +137,138 @@ python experiments/exp3_main_sweep/analyze_exp3.py
 Baselines are fully deterministic; `bayesian_opt` (optuna TPE) is seeded but not guaranteed bit-for-bit reproducible across machines/library-patch-versions (same caveat as Experiments 0/2) — the aggregate conclusions (§8) are the claim being made.
 
 **Acceptance criteria for this experiment (per the plan):** Every reported "X% improvement" claim has a seed-level std/CI attached and, ideally, a significance test reported in the stats.md. **Met**: every %-improvement claim in §4 carries std/CI (`results/processed/exp3_optimizer_vs_baseline.csv`), and both a t-test and Wilcoxon signed-rank test are reported for every comparison (§5), including the honest disclosure that not all comparisons survive multiple-comparisons correction and that one baseline comparison is structurally unfair to the optimizer's current action space (§8) — this is what "defensible" means here: the strongest claim the data actually supports, clearly separated from the claim it doesn't.
+
+---
+
+## 11. Per-stage action-space re-run (2026-09-02/03) — closes §8's central gap
+
+`docs/NEXT_INSTRUCTIONS.md` item 3, directly following from §8/§9 above: the
+action-space asymmetry that explained `bayesian_opt`'s loss to
+`best_fixed_per_stage` was fixed at the source (`common/optimizers/environment.py`
+now applies one `(dataflow_mode, SRAM-split)` choice **per GEMM stage**, matching
+`best_fixed_per_stage`'s own granularity — see that module's docstring). This
+section re-runs the identical grid, method, and significance tests as §1–10 above
+on the new action space, to check whether the gap actually closes. **Everything
+in §1–10 is left as-is, unmodified** (plan ground rule 6) — this section is the
+new, authoritative comparison; §1–10 remains the historical record of why the
+redesign happened.
+
+> **Headline finding:** the optimizer (`a2c`, selected 2026-09-02 — see
+> `exp0_stats.md` §11) **no longer loses significantly to `best_fixed_per_stage`
+> in any of the 4 cells** (was: significantly loses in all 4, p < 0.0001 each).
+> It still significantly beats the best single-dataflow baseline in 3/4 cells
+> (uncorrected), 2/4 surviving Bonferroni — essentially unchanged from §5's
+> original finding. The central asymmetry §8 identified is closed.
+
+**Method:** identical to §3 (same grid: seq_len∈{128,256} × array∈{16×16,32×32},
+same 5 seeds, same 6-iteration budget, same significance tests) — only the action
+space and the selected optimizer (`a2c`, not `bayesian_opt` — §11's own
+`exp0_stats.md` justification) differ. Logged to a **new** raw CSV,
+`results/raw/exp3_perstage.csv` (252 rows, **zero FAILED** — a cleaner run than
+§6's zero-FAILED original, notable given the real infrastructure incident this
+run survived; see `RESULTS_TRACKER.md`'s "Infrastructure incident" section for
+the full account of a disk-exhaustion crash, its root-cause fix, and two
+session-boundary interruptions that delayed but did not corrupt this run — one
+partially-logged, interrupted cell was discarded and cleanly redone rather than
+kept alongside a valid re-run of the same seed).
+
+```bash
+python experiments/exp3_main_sweep/run_exp3.py \
+  --workload-names exp3_seq128 exp3_seq256 --hardware-names 16x16 32x32 \
+  --seeds 0 1 2 3 4 --n-iterations 6 --out results/raw/exp3_perstage.csv
+python experiments/exp3_main_sweep/analyze_exp3.py \
+  --raw-csv results/raw/exp3_perstage.csv --out-prefix exp3_perstage --optimizer-name a2c
+```
+
+### 11a. Results
+
+| Cell | best_fixed_per_stage | a2c mean ± std | vs. best_overall | vs. best_single_dataflow (os_only) |
+|---|---|---|---|---|
+| seq128 @ 16×16 | 91.89% | 91.41% ± 1.72 | **−0.53%** (was −1.88% at 3-dim) | +1.61% (was +0.23%) |
+| seq128 @ 32×32 | 82.49% | 83.17% ± 2.57 | **+0.82%** (was −2.88%) | +4.62% (was +0.79%) |
+| seq256 @ 16×16 | 94.01% | 93.33% ± 1.17 | **−0.72%** (was −5.09%) | +4.85% (was +0.23%) |
+| seq256 @ 32×32 | 87.45% | 86.41% ± 2.24 | **−1.19%** (was −9.14%, the largest 3-dim gap) | +9.50% (was +0.70%) |
+
+(3-dim comparison figures from §4/§5 above, restated here for direct contrast —
+not re-derived, copied verbatim from §4's table.)
+
+**Significance** (`results/processed/exp3_perstage_significance.csv`; test used:
+identical to §5 — one-sample t-test + Wilcoxon signed-rank, n=5):
+
+| Cell | vs. best_overall: t, p | vs. best_single_dataflow: t, p |
+|---|---|---|
+| seq128 @ 16×16 | t=−0.63, p=0.561 | t=+1.89, p=0.133 |
+| seq128 @ 32×32 | t=+0.59, p=0.587 | t=+3.19, **p=0.033** |
+| seq256 @ 16×16 | t=−1.29, p=0.266 | t=+8.29, **p=0.0012** |
+| seq256 @ 32×32 | t=−1.04, p=0.358 | t=+7.47, **p=0.0017** |
+
+- **vs. best_overall (best_fixed_per_stage): 0/4 significant** (all p > 0.26) —
+  was 4/4 significant (all p < 0.0001) at the 3-dim action space. This is the
+  headline reversal: the optimizer now **statistically matches**
+  `best_fixed_per_stage` in every cell, numerically ahead in 1/4 (seq128@32×32,
+  +0.82%) and numerically behind but not significantly in 3/4.
+- **vs. best_single_dataflow (os_only): 3/4 significant uncorrected**
+  (seq128@16×16 the exception, p=0.133); **2/4 survive Bonferroni**
+  (α=0.05/8=0.00625: seq256@16×16 p=0.0012, seq256@32×32 p=0.0017 survive;
+  seq128@32×32's p=0.033 does not) — the same 2 cells that survived Bonferroni
+  at the 3-dim action space (§5), and the same overall pattern (small-n Wilcoxon
+  again gives p=0.0625 in every comparison where all 5 signed differences agree
+  — the exact test's floor at n=5, not evidence against the t-test).
+
+**Figures:** `results/figures/exp3_perstage_utilization_heatmap.png` (+`.svg`),
+`exp3_perstage_pct_improvement_bars_vs_{best_overall,best_single_dataflow}.png`
+(+`.svg`) — same plots as §7, new-action-space data.
+
+### 11b. A real, mechanistic observation on convergence (not part of the headline claim)
+
+Every `a2c` seed's `convergence_iteration` (Experiment 2's criterion,
+window=5/epsilon=0.1, computed on `best_reward_so_far`) is **identical across all
+4 cells for a given seed**: `[4, 9, 7, 7, 4]` for seeds `[0, 1, 2, 3, 4]`
+respectively, in every one of the 4 (seq_len, array) combinations (5/5 seeds
+"converge" in every cell, mean iteration 6.20). **[INTERPRETATION]** This is a
+stronger version of Experiment 2's own finding (the criterion triggers on
+early-trial structure, not genuine settling) — here, with a genuinely different
+algorithm (A2C, not TPE) run across 4 different workload/hardware cells, the
+*exact same* per-seed convergence iteration recurs regardless of the actual
+reward landscape being searched. Plausible mechanism, not verified further here:
+under this project's ~6-10-step budget, A2C's policy has essentially no time to
+train, so the *sequence of raw actions it samples* is dominated by its
+seed-determined initial exploration noise rather than by reward feedback — the
+same seed therefore produces a near-identical *pattern* of when the running-max
+reward jumps vs. plateaus, independent of the cell's actual reward values. Not
+investigated further — flagged as evidence (again) that this criterion measures
+exploration structure, not landscape-dependent convergence, consistent with
+Experiment 2's own conclusion that Experiment 3+ should not use it for dynamic
+early-stopping (unchanged; still fixed-budget here).
+
+### 11c. Interpretation
+
+- **[RESULT]** The optimizer no longer loses significantly to
+  `best_fixed_per_stage` in any cell (0/4, was 4/4) — the central action-space
+  asymmetry §8 identified is closed by the per-stage redesign, exactly as
+  `docs/NEXT_INSTRUCTIONS.md` item 1 predicted it should.
+- **[RESULT]** The `best_single_dataflow` comparison is essentially unchanged in
+  shape (3/4 significant uncorrected, 2/4 survive Bonferroni, same 2 cells) but
+  the margins grew substantially — e.g. seq256@32×32's advantage over `os_only`
+  grew from +0.70% (3-dim) to +9.50% (per-stage) — consistent with the optimizer
+  now being able to express a genuinely stronger mapping, not just a marginally
+  better SRAM split on top of one global dataflow.
+- **[INTERPRETATION]** The optimizer does not *beat* `best_fixed_per_stage`
+  either (0/4 cells show a significant win) — it matches a strong, exhaustively-
+  searched-per-stage static baseline, within a 6-iteration budget, on a 9-dimensional
+  action space. That the two are statistically indistinguishable, rather than the
+  optimizer winning outright, is itself informative for Experiment 5's ablation
+  (does the joint/tiling-only distinction still hold on this larger space?) and
+  Experiment 4's scalability re-run (is a 6-iteration budget still enough at
+  seq_len=512's larger, harder-to-search 9-dim space?) — both flagged as the
+  next real steps, not answered here.
+- **[LIMITATION]** Same real, disclosed scope constraints as §9: 2×2 grid (not
+  the plan's full range), 6-iteration budget (now searching 9 dimensions instead
+  of 3 — untested here whether this budget is still adequate, unlike the
+  timing-only re-check `RESULTS_TRACKER.md`'s infrastructure section describes;
+  Experiment 4's own re-run is where budget-adequacy at larger scale is the
+  explicit subject), no multiple-comparisons correction applied by default
+  (reported both ways, as before).
+- **[LIMITATION]** `dram_bandwidth_bytes_per_cycle` unsimulated,
+  `energy_per_cycle_pj` a placeholder — identical caveat to §9, EDP columns
+  should not be cited without revisiting these.
