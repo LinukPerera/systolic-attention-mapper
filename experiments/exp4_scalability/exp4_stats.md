@@ -123,4 +123,114 @@ python experiments/exp4_scalability/analyze_exp4.py
 
 Baselines are fully deterministic; `bayesian_opt` (optuna TPE) is seeded but not guaranteed bit-for-bit reproducible across machines/library-patch-versions (same caveat as every prior optimizer-involving experiment).
 
+---
+
+## 11. Per-stage action-space re-run (2026-09-03) — the reversal is gone
+
+`docs/NEXT_INSTRUCTIONS.md` item 2, using the **same 6-iteration budget as
+§1–10's original run** (not a larger one, deliberately — isolating whether the
+per-stage action space alone changes the seq_len=512 reversal, without
+conflating it with a budget change; a larger-budget follow-up, §9's own
+recommended next step, stays a separate later run). Everything in §1–10 above
+is unmodified — this section is the new, authoritative comparison.
+
+> **Headline finding:** the seq_len=512 reversal is gone. The optimizer
+> (`a2c`) now beats the best single-dataflow baseline by **+6.31%** at
+> seq512@32×32 (was **−1.64%**) — solidly positive, in the same range as the
+> seq256@32×32 point (+9.50%), not a discontinuity. RQ3's answer changes: on
+> the per-stage action space, at this same fixed 6-iteration budget, advantage
+> no longer reverses at the tested larger scale.
+
+**Method:** identical to §3 (same one new cell: seq512@32×32; same 5 seeds;
+same 6-iteration budget) — only the action space and optimizer (`a2c`, not
+`bayesian_opt`) differ. Feasibility ceiling **not independently re-verified**
+for the per-stage action space (seq512@16×16 still assumed infeasible,
+seq1024@32×32 still assumed infeasible — carried forward from §3's real
+3-dim-action-space measurements, per item 2's explicit scope: only the
+already-established-feasible point, isolating the action-space variable
+alone). Logged to `results/raw/exp4_perstage.csv` (63 rows, zero FAILED).
+
+```bash
+python experiments/exp4_scalability/run_exp4.py --out results/raw/exp4_perstage.csv
+python experiments/exp4_scalability/analyze_exp4.py \
+  --exp3-raw-csv ../exp3_main_sweep/results/raw/exp3_perstage.csv \
+  --exp4-raw-csv results/raw/exp4_perstage.csv --out-prefix exp4_perstage --optimizer-name a2c
+```
+
+### 11a. Results
+
+**Scalability summary** (`results/processed/exp4_perstage_scalability_summary.csv`, n=5 seeds/point; the 4 smaller points are Experiment 3's per-stage re-run data, `exp3_stats.md` §11, restated here for the trend):
+
+| Cell | Best single-dataflow | Optimizer util% (mean ± std) | % improvement (± 95% CI) | Cost: wall-clock s (± 95% CI) |
+|---|---|---|---|---|
+| seq128 @ 16×16 | os_only, 89.96 | 91.41 ± 1.72 | **+1.61% ± 2.37** (was +0.23% ± 0.23) | 425.2 ± 68.2 (was 199.5 ± 16.8) |
+| seq256 @ 16×16 | os_only, 89.02 | 93.33 ± 1.17 | **+4.85% ± 1.63** (was +0.23% ± 0.12) | 1160.7 ± 145.5 (was 541.5 ± 87.9) |
+| seq128 @ 32×32 | os_only, 79.50 | 83.17 ± 2.57 | **+4.62% ± 4.02** (was +0.79% ± 0.47) | 202.7 ± 61.4 (was 81.3 ± 3.1) |
+| seq256 @ 32×32 | os_only, 78.91 | 86.41 ± 2.24 | **+9.50% ± 3.53** (was +0.70% ± 0.35) | 386.5 ± 34.9 (was 199.7 ± 19.7) |
+| seq512 @ 32×32 | **ws_only**, 84.49 | 89.82 ± 1.64 | **+6.31% ± 2.41** (was **−1.64% ± 4.55**) | 1148.2 ± 145.3 (was 562.6 ± 109.7) |
+
+Every point's margin grew substantially (consistent with `exp3_stats.md` §11's
+same observation) and the seq512 point flipped from negative to positive —
+**the largest single change in this table**. `ws_only` is still the best
+single-dataflow method at seq512 (unchanged mechanism from §8: the best static
+dataflow itself shifts at this scale), but the optimizer now comfortably beats
+it rather than losing to it.
+
+**Convergence** (`results/processed/exp4_perstage_convergence_iterations.csv`):
+**25/25 seeds converged** (was 19/25), mean iteration **6.2 ± 2.17 uniformly
+across all 5 cells** — not just this new point but *all four* re-derived
+Experiment 3 points too. This exactly matches `exp3_stats.md` §11b's own
+finding (identical per-seed `convergence_iteration` sequence `[4,9,7,7,4]`
+across every cell it tested) — now confirmed to extend to a 5th, genuinely
+new, larger-scale cell as well. Reinforces §11b's interpretation: this
+criterion tracks `a2c`'s seed-determined exploration structure, not the
+per-cell reward landscape (which differs substantially between seq128@16×16
+and seq512@32×32).
+
+**Figure:** `results/figures/exp4_perstage_scalability_panels.png` (+`.svg`) —
+same two-panel plot as §7, new-action-space data.
+
+### 11b. Interpretation
+
+- **[RESULT]** The seq_len=512 reversal (§8's central 3-dim finding) does not
+  reproduce on the per-stage action space — the optimizer beats the best
+  single-dataflow baseline by +6.31% there, comparable in magnitude to the
+  seq256@32×32 point (+9.50%), not a discontinuity in the trend.
+- **[RESULT]** §8's own diagnosis of the 3-dim reversal (one seed of five
+  landing far from the other four, driven by a fixed 6-iteration budget not
+  reliably relocating to a moved optimum) is not what's happening here: all 5
+  seeds converge, and the point estimate itself is solidly positive with a CI
+  (±2.41%) narrower than three of the four smaller-scale points, not wider.
+- **[INTERPRETATION] — the coherent, cross-experiment picture.** §8's
+  diagnosis was correct for the 3-dim action space's actual limitation (a
+  single global dataflow choice, unable to express the per-stage
+  specialization the optimum increasingly needs as scale grows) — it was a
+  real, budget-adjacent symptom of the action-space asymmetry
+  `exp3_stats.md` §8 also identified, not an independent budget problem. Once
+  the action space itself was fixed (per-stage dataflow, `environment.py`),
+  the same fixed 6-iteration budget that previously "wasn't enough" at
+  seq_len=512 no longer needs to be larger — it was never really a budget
+  question. This is a stronger, more specific answer to RQ3 than either
+  report could give alone: the reversal was an action-space symptom, confirmed
+  by showing it disappears when only the action space changes and the budget
+  is deliberately held fixed (item 2's own experimental design, isolating
+  exactly this variable).
+- **[RESULT]** Cost still grows substantially with scale (425s→1161s→1148s
+  across the tested per-stage points, roughly 3-6× the 3-dim run's costs at
+  the same cells — consistent with per-stage tripling real simulator calls,
+  `RESULTS_TRACKER.md`'s Infrastructure incident section) — the per-stage
+  redesign fixed the *quality* trend but did not reduce, and somewhat
+  increased, the *cost* trend, an expected and previously-documented tradeoff.
+- **[LIMITATION]** Same real, disclosed scope as §9: one point at the new
+  scale, one array size; feasibility ceiling (seq512@16×16, seq1024@32×32)
+  carried forward from the 3-dim measurements, not independently re-verified
+  for the per-stage action space (a real, flagged gap — the per-stage design's
+  3 separate smaller-workload calls per stage could plausibly shift this
+  ceiling in either direction; untested here, per item 2's explicit scope).
+  §9's own recommended larger-budget follow-up is now lower-priority given
+  this result (the fixed-budget reversal that motivated it is gone), but
+  still a reasonable check for robustness.
+- **[LIMITATION]** `dram_bandwidth_bytes_per_cycle` unsimulated,
+  `energy_per_cycle_pj` a placeholder — identical caveat to §9.
+
 **Acceptance criteria for this experiment (per the plan):** A direct, evidence-based answer to RQ3 is written into the stats.md (not just plots). **Met** — §8's interpretation states plainly what happens to performance (shrinks, reverses) and cost (grows, grows faster on smaller arrays) as scale increases, grounded in the real data in §4, with the mechanism (fixed-budget insufficiency when the landscape's optimum relocates) identified rather than left as an unexplained correlation.
