@@ -354,3 +354,114 @@ of the generalization gap, even if it's large — this belongs in limitations
 either way. **Met**: §8/§9 state plainly that the gap is small and not
 statistically confirmed at this budget, rather than overstating either a clean
 confirmation or a clean rejection of the stated hypothesis.
+
+---
+
+## 11. Larger fresh-ceiling budget follow-up (2026-09-03) — §9's own flagged next step, run same-session
+
+Directly follows §9's own recommendation ("re-run with a larger fresh-ceiling
+training budget... to check whether a policy with room to actually explore
+shows a larger, more consistently-detectable regime-transfer gap"). Same 2
+held-out cells, same 5 seeds, **only** `fresh_ceiling`'s budget changed
+(`n_iterations`: 6 → 15, chosen to match Experiment 0's own pilot-scale
+precedent already established in this project) — `best_fixed_per_stage` and
+`zero_shot_transfer` are fully deterministic given the unchanged source
+actions, so they were **not re-simulated** (`run_exp6.py --roles fresh_ceiling`,
+a new flag added for exactly this kind of isolated follow-up — this project's
+established no-redundant-re-simulation principle). Real per-call timing probed
+first (cell A ~19.7s/eval, cell B ~5.8s/eval, both at `n_iterations=15`,
+confirming the earlier per-eval costs scale linearly) before committing to the
+full budget — projected ~32 minutes, no scope cuts needed.
+
+> **Headline: the gap does not close.** Both p-values move slightly toward
+> significance (Cell A: 0.955 → 0.693; Cell B: 0.654 → 0.590) but remain far
+> from p<0.05. The larger budget **did** find real, new headroom — but only in
+> one seed per cell (seed 0), not a systematic, budget-limited effect across
+> all seeds. n=5 remains the actual bottleneck, not the budget.
+
+### 11a. Results
+
+`results/processed/exp6_n15_agg.csv` (merged: original baselines/transfer +
+new `n_iterations=15` fresh_ceiling, via `merge_n15.py`):
+
+| Cell | `best_fixed_per_stage` | `zero_shot_transfer` (unchanged) | `fresh_ceiling`, n=6 (was) | `fresh_ceiling`, n=15 (now) |
+|---|---|---|---|---|
+| head_dim=48 (same regime) | 74.508 | 73.967 ± 2.666 | 74.063 ± 2.526 | **74.589 ± 2.089** |
+| head_dim=24 (different regime) | 66.503 | 65.527 ± 2.946 | 66.269 ± 1.970 | **66.401 ± 1.810** |
+
+**[RESULT]** At `n_iterations=15`, `fresh_ceiling` now numerically *exceeds*
+`best_fixed_per_stage` at the same-regime cell (74.589 > 74.508) — the first
+time any learned method (transfer or fresh training) has beaten this strong
+static baseline anywhere in this experiment. At the different-regime cell it
+still falls short (66.401 < 66.503), though closer than before.
+
+**Per-seed detail — where the new headroom actually came from:**
+
+| Seed | head_dim=48: transfer | ceiling (n=6) | ceiling (n=15) | head_dim=24: transfer | ceiling (n=6) | ceiling (n=15) |
+|---|---|---|---|---|---|---|
+| 0 | 71.476 | 71.476 (gap 0.000) | **74.109 (gap 2.633)** | 62.443 | 64.174 (gap 1.731) | **64.834 (gap 2.391)** |
+| 1 | 76.124 | 76.124 | 76.124 (gap 0.000) | 68.578 | 68.578 | 68.578 (gap 0.000) |
+| 2 | 76.417 | 76.417 | 76.417 (gap 0.000) | 67.214 | 67.241 | 67.241 (gap 0.027) |
+| 3 | 70.751 | 71.228 | 71.228 (gap 0.477, unchanged) | 62.283 | 64.236 | 64.236 (gap 1.953, unchanged) |
+| 4 | 75.069 | 75.069 | 75.069 (gap 0.000) | 67.116 | 67.116 | 67.116 (gap 0.000) |
+
+**[RESULT]** Only **seed 0**, in *both* cells, found a materially better action
+with the larger budget (+2.63 points at head_dim=48, +0.66 more on top of an
+already-real gap at head_dim=24). Every other seed's fresh-ceiling result is
+**identical** to `n_iterations=6`, to 3 decimal places — confirming §4b's/
+`exp3_stats.md` §11b's interpretation directly: those seeds had already
+converged, not merely run out of budget, so more budget bought them nothing.
+Total per-cell gap (sum of all 5 seeds' gaps) grew from 0.477→3.110 at
+head_dim=48 and 3.711→4.371 at head_dim=24 — **head_dim=24 (different regime)
+still shows the larger total mismatch**, consistent with the original
+hypothesis's direction, but the margin between the two cells narrowed
+substantially (was ~7.8×, now ~1.4×) now that head_dim=48's seed 0 also turned
+out to have real unrealized headroom.
+
+**Significance** (`results/processed/exp6_n15_significance.csv`):
+
+| Cell | Comparison | p (n=6, was) | p (n=15, now) |
+|---|---|---|---|
+| head_dim=48 | transfer vs. fresh_ceiling | 0.955 | 0.693 |
+| head_dim=24 | transfer vs. fresh_ceiling | 0.654 | 0.590 |
+
+Both move toward significance, neither crosses it, at n=5 seeds per cell.
+
+**Figure:** `results/figures/exp6_n15_generalization_bars.png` (+`.svg`) — same
+chart as Fig. 1, `n_iterations=15` fresh_ceiling data.
+
+### 11b. Interpretation
+
+- **[RESULT]** Increasing the fresh-ceiling budget from 6 to 15 iterations
+  does **not** close the statistical gap in either held-out cell — both
+  comparisons remain far from significance at n=5.
+- **[RESULT]** The budget increase **did** surface real, new headroom, but
+  concentrated in one seed per cell (seed 0) — not a uniform effect across all
+  5 seeds. This means the original (`n=6`) result was not fully "converged" as
+  §4b's interpretation assumed for *every* seed — it was converged for 4 of 5,
+  and budget-limited for exactly 1.
+- **[INTERPRETATION]** This refines, rather than overturns, §4b/§8's
+  conclusion: `a2c`'s seed-determined exploration structure at a tiny budget is
+  real and dominant (4/5 seeds unchanged, exactly, regardless of budget), but
+  it is not the *whole* story — a specific seed can still be budget-limited
+  even when most aren't, and a larger budget is the correct, specific lever to
+  find that out (exactly as §9 predicted), rather than assuming the tiny-budget
+  result was already each seed's ceiling.
+- **[INTERPRETATION]** The regime-transfer hypothesis's *direction* (more
+  mismatch at the different-regime cell) still holds in the total-gap sense
+  (4.371 > 3.111) even after this follow-up, but the margin narrowed
+  substantially now that the same-regime cell also shows a real, single-seed
+  gap. The honest reading is unchanged from §8: a real, small, directionally-
+  consistent effect exists, still not confirmable at n=5 — this follow-up adds
+  evidence in both directions (a real gap grew at both cells) without changing
+  that fundamental conclusion.
+- **[LIMITATION]** n=5 remains the real bottleneck, not budget — a further
+  budget increase is unlikely to change this conclusion much further, since 4
+  of 5 seeds are already provably converged at `n_iterations=6`; more seeds
+  (not more iterations) is the correct lever if closing this gap to
+  significance is the goal, and was not attempted here given the same real
+  time/resource constraints documented throughout `RESULTS_TRACKER.md`.
+- **[LIMITATION]** The generalization-capture ratio (§4c) becomes even more
+  clearly unusable here: head_dim=48's denominator flips sign (ceiling now
+  exceeds baseline), producing a nonsensical −666% capture figure. Reported as
+  computed, with this caveat, exactly as §4c's own note anticipated.
