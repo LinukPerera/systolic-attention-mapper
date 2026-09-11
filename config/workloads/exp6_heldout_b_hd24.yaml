@@ -1,0 +1,15 @@
+# Experiment 6, held-out cell B ("different regime" arm). hidden_dim=192/num_heads=8
+# -> head_dim=24. Deliberately deviates from config/workloads/README.md's
+# head_dim=64 standard (Experiment 6 IS the "specific experiment with a stated
+# reason to vary it" that README anticipates): this cell tests whether a
+# per-stage action learned at head_dim=64/array=32x32 (above-knee:
+# array_size=32 < head_dim=64) transfers to a workload in the OPPOSITE regime
+# (24 < array_size=32, below-knee -- array itself becomes the bottleneck, not
+# head_dim) -- see docs/NEXT_INSTRUCTIONS.md §1 for the full regime-transfer
+# hypothesis this cell tests. seq_len and array_size held fixed at Experiment
+# 3's own seq256@32x32 values so head_dim (regime) is the sole manipulated
+# variable.
+name: exp6_heldout_b_hd24
+seq_len: 256
+hidden_dim: 192
+num_heads: 8

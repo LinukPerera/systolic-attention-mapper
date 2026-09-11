@@ -1,0 +1,14 @@
+# Experiment 6, held-out cell A ("same regime" arm). hidden_dim=384/num_heads=8
+# -> head_dim=48. Deliberately deviates from config/workloads/README.md's
+# head_dim=64 standard (Experiment 6 IS the "specific experiment with a stated
+# reason to vary it" that README anticipates): the whole point of this cell is
+# to test whether a per-stage action learned at head_dim=64/array=32x32
+# (above-knee: array_size=32 < head_dim=64) transfers to a different head_dim
+# that keeps the SAME regime (48 > array_size=32, still above-knee) -- see
+# docs/NEXT_INSTRUCTIONS.md §1 for the full regime-transfer hypothesis this
+# cell tests. seq_len and array_size held fixed at Experiment 3's own
+# seq256@32x32 values so head_dim (regime) is the sole manipulated variable.
+name: exp6_heldout_a_hd48
+seq_len: 256
+hidden_dim: 384
+num_heads: 8

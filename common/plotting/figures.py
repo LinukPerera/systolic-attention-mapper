@@ -233,6 +233,70 @@ def plot_ablation_bars(df: pd.DataFrame, out_path: Path) -> None:
     plt.close(fig)
 
 
-def plot_generalization_comparison(df: Any, out_path: Path) -> None:
-    """Bar/line chart comparing in-distribution vs. held-out performance relative to baseline (Experiment 6)."""
-    raise NotImplementedError
+def plot_generalization_comparison(df: pd.DataFrame, capture_labels: dict[str, float], out_path: Path) -> None:
+    """Bar chart per held-out cell: best_fixed_per_stage baseline, zero-shot
+    transfer (with error bars), fresh-ceiling training (with error bars) --
+    Experiment 6's zero-shot-transfer variant of `plot_ablation_bars`'s visual
+    grammar (same style, different variant set/semantics -- see
+    `docs/NEXT_INSTRUCTIONS.md` §5 for why this reuses that chart's grammar).
+
+    Args:
+        df: Columns ["cell", "variant", "value_mean", "value_ci"] — one row per
+            (cell, variant); `variant` one of "baseline"/"zero_shot_transfer"/"fresh_ceiling".
+        capture_labels: {cell: generalization_capture_pct} — annotated above each
+            cell's zero_shot_transfer bar (the number this experiment's own
+            headline result is judged by, per docs/NEXT_INSTRUCTIONS.md §4).
+        out_path: Base output path; writes `<out_path>.png` and `<out_path>.svg`.
+    """
+    import matplotlib.pyplot as plt
+
+    apply_style()
+    variants = ["baseline", "zero_shot_transfer", "fresh_ceiling"]
+    variant_colors = {"baseline": OPTIMIZER_COLORS["baseline"], "zero_shot_transfer": DATAFLOW_COLORS["WS"],
+                       # "reinforce", not "a2c" -- a2c substitutes for REINFORCE project-wide
+                       # (common/optimizers/a2c.py), OPTIMIZER_COLORS was never renamed to match.
+                       "fresh_ceiling": OPTIMIZER_COLORS["reinforce"]}
+    cells = list(df["cell"].unique())
+    x = np.arange(len(cells))
+    width = 0.8 / len(variants)
+
+    # Cell labels here ("seq256 @ 32x32 (head_dim=24)") are longer than
+    # plot_ablation_bars' ("seq128 @ 16x16") -- a per-cell width tuned for the
+    # latter left these overlapping at 2 cells; wrap onto two lines and widen.
+    wrapped_cells = [c.replace(" (", "\n(") for c in cells]
+    fig, ax = plt.subplots(figsize=(max(7, 4.2 * len(cells)), 4.5))
+    bars_by_variant = {}
+    cis_by_variant = {}
+    for i, variant in enumerate(variants):
+        sub = df[df["variant"] == variant].set_index("cell").reindex(cells)
+        ci = sub["value_ci"].fillna(0)
+        bars = ax.bar(x + i * width, sub["value_mean"], width, yerr=ci,
+                       label=variant, color=variant_colors[variant], capsize=4)
+        bars_by_variant[variant] = bars
+        cis_by_variant[variant] = ci.to_numpy()
+
+    # Generalization-capture % labelled above each cell's zero_shot_transfer error
+    # bar (not just the bar itself, or it overlaps the error cap) -- the number
+    # this experiment's own headline result is judged by (see
+    # docs/NEXT_INSTRUCTIONS.md §4), not buried in a separate table only.
+    transfer_bars = bars_by_variant["zero_shot_transfer"]
+    transfer_cis = cis_by_variant["zero_shot_transfer"]
+    label_headroom = max((df["value_mean"] + df["value_ci"].fillna(0)).max() * 0.02, 0.5)
+    for i, cell in enumerate(cells):
+        pct = capture_labels.get(cell, float("nan"))
+        bar = transfer_bars[i]
+        top = bar.get_height() + transfer_cis[i]
+        ax.text(bar.get_x() + bar.get_width() / 2, top + label_headroom,
+                f"{pct:.0f}%" if pct == pct else "n/a", ha="center", va="bottom", fontsize=8, fontweight="bold")
+
+    data_min = (df["value_mean"] - df["value_ci"].fillna(0)).min()
+    data_max = (df["value_mean"] + df["value_ci"].fillna(0)).max()
+    pad = max((data_max - data_min) * 0.15, 1.0)
+    ax.set_ylim(max(0, data_min - pad), data_max + pad * 2)
+
+    ax.set_xticks(x + width * (len(variants) - 1) / 2)
+    ax.set_xticklabels(wrapped_cells)
+    ax.set_ylabel("PE utilization (%)")
+    ax.legend()
+    save_figure(fig, out_path)
+    plt.close(fig)
