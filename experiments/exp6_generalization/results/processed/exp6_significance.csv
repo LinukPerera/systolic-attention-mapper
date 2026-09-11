@@ -1,0 +1,5 @@
+cell,comparison,n,statistic,pvalue,wilcoxon_pvalue,cohens_d,pvalue_bonferroni,significant_at_0.05_uncorrected,significant_at_0.05_bonferroni
+seq256 @ 32x32 (head_dim=24),zero_shot_transfer vs. best_fixed_per_stage (one-sample),5,-0.7408835131479012,0.4998986112462543,0.8125,-0.3313331797615133,1.0,False,False
+seq256 @ 32x32 (head_dim=24),"zero_shot_transfer vs. fresh_ceiling (independent two-sample, Welch)",5v5,-0.4683094620062096,0.6538339611861892,0.6742358755985722,,1.0,False,False
+seq256 @ 32x32 (head_dim=48),zero_shot_transfer vs. best_fixed_per_stage (one-sample),5,-0.45384162611860773,0.6734764166753071,0.8125,-0.2029641454040502,1.0,False,False
+seq256 @ 32x32 (head_dim=48),"zero_shot_transfer vs. fresh_ceiling (independent two-sample, Welch)",5v5,-0.05817269532587033,0.9550418904462628,1.0,,1.0,False,False
