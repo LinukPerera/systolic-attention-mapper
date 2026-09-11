@@ -163,6 +163,16 @@ def parse_args() -> argparse.Namespace:
                              "docs/NEXT_INSTRUCTIONS.md §3.3.")
     parser.add_argument("--out", type=str, default=str(RAW_CSV))
     parser.add_argument("--source-exp3-csv", type=str, default=str(SOURCE_EXP3_CSV))
+    parser.add_argument(
+        "--roles", type=str, nargs="+", default=["baselines", "zero_shot_transfer", "fresh_ceiling"],
+        choices=["baselines", "zero_shot_transfer", "fresh_ceiling"],
+        help="Which role(s) to actually run -- baselines and zero_shot_transfer are fully "
+             "deterministic given the source actions (already logged once), so a follow-up run "
+             "that only changes --n-iterations (e.g. a larger fresh-ceiling budget) should pass "
+             "--roles fresh_ceiling to avoid re-simulating unchanged, already-real data (this "
+             "project's established no-redundant-re-simulation principle, e.g. Experiment 4/5's "
+             "own data-provenance choices).",
+    )
     return parser.parse_args()
 
 
@@ -188,56 +198,62 @@ def main() -> None:
 
         try:
             # --- Baselines (role: baseline_single_dataflow / baseline_fixed_per_stage) ---
-            baselines = evaluate_all_baselines(workload, hardware, scratch_dir=cell_scratch / "baselines")
-            for method, result, dataflow_mode in [
-                ("ws_only", baselines.ws_only, "WS"),
-                ("os_only", baselines.os_only, "OS"),
-                ("is_only", baselines.is_only, "IS"),
-            ]:
-                logging_utils.append_run_row(csv_path, _base_row(
-                    method=method, hardware=hardware, workload=workload, dataflow_mode=dataflow_mode,
-                    seed=-1, iteration=0, result=result, git_commit=git_commit, notes={"sim_notes": result.notes},
-                ))
-                print(f"[exp6]   {method}: status={result.status}" + (
-                    f" util={result.pe_utilization_pct:.2f}%" if result.status == "OK" else ""))
-
-            for attempt in baselines.best_fixed_per_stage.all_attempts:
-                logging_utils.append_run_row(csv_path, _base_row(
-                    method="best_fixed_per_stage_search", hardware=hardware, workload=workload,
-                    dataflow_mode=attempt.dataflow_mode, seed=-1, iteration=0, result=attempt.result,
-                    git_commit=git_commit, notes={"stage": attempt.stage_name, "sim_notes": attempt.result.notes},
-                ))
-
-            best_fixed_per_stage_util = None
-            if baselines.best_fixed_per_stage_combined is not None:
-                per_stage_choice = {s: m.dataflow_mode for s, m in baselines.best_fixed_per_stage.winners.items()}
-                logging_utils.append_run_row(csv_path, _base_row(
-                    method="best_fixed_per_stage", hardware=hardware, workload=workload, dataflow_mode="mixed",
-                    seed=-1, iteration=0, result=baselines.best_fixed_per_stage_combined, git_commit=git_commit,
-                    notes={"per_stage_dataflow": per_stage_choice},
-                ))
-                best_fixed_per_stage_util = baselines.best_fixed_per_stage_combined.pe_utilization_pct
-                print(f"[exp6]   best_fixed_per_stage: status=OK util={best_fixed_per_stage_util:.2f}%")
+            if "baselines" not in args.roles:
+                print("[exp6]   (baselines skipped -- --roles did not include it; reusing already-logged data)")
             else:
-                missing = sorted({a.stage_name for a in baselines.best_fixed_per_stage.all_attempts}
-                                  - set(baselines.best_fixed_per_stage.winners))
-                failed = SimulationResult(
-                    exec_cycles=0, pe_utilization_pct=0.0, sram_dram_traffic_bytes=0,
-                    wall_clock_s=sum(a.result.wall_clock_s for a in baselines.best_fixed_per_stage.all_attempts),
-                    status="FAILED", notes=f"stage(s) with zero successful dataflow candidates: {missing}",
-                )
-                logging_utils.append_run_row(csv_path, _base_row(
-                    method="best_fixed_per_stage", hardware=hardware, workload=workload, dataflow_mode="mixed",
-                    seed=-1, iteration=0, result=failed, git_commit=git_commit, notes={"missing_stages": missing},
-                ))
-                print(f"[exp6]   best_fixed_per_stage: status=FAILED (no winner for {missing})")
+                baselines = evaluate_all_baselines(workload, hardware, scratch_dir=cell_scratch / "baselines")
+                for method, result, dataflow_mode in [
+                    ("ws_only", baselines.ws_only, "WS"),
+                    ("os_only", baselines.os_only, "OS"),
+                    ("is_only", baselines.is_only, "IS"),
+                ]:
+                    logging_utils.append_run_row(csv_path, _base_row(
+                        method=method, hardware=hardware, workload=workload, dataflow_mode=dataflow_mode,
+                        seed=-1, iteration=0, result=result, git_commit=git_commit, notes={"sim_notes": result.notes},
+                    ))
+                    print(f"[exp6]   {method}: status={result.status}" + (
+                        f" util={result.pe_utilization_pct:.2f}%" if result.status == "OK" else ""))
+
+                for attempt in baselines.best_fixed_per_stage.all_attempts:
+                    logging_utils.append_run_row(csv_path, _base_row(
+                        method="best_fixed_per_stage_search", hardware=hardware, workload=workload,
+                        dataflow_mode=attempt.dataflow_mode, seed=-1, iteration=0, result=attempt.result,
+                        git_commit=git_commit, notes={"stage": attempt.stage_name, "sim_notes": attempt.result.notes},
+                    ))
+
+                if baselines.best_fixed_per_stage_combined is not None:
+                    per_stage_choice = {s: m.dataflow_mode for s, m in baselines.best_fixed_per_stage.winners.items()}
+                    logging_utils.append_run_row(csv_path, _base_row(
+                        method="best_fixed_per_stage", hardware=hardware, workload=workload, dataflow_mode="mixed",
+                        seed=-1, iteration=0, result=baselines.best_fixed_per_stage_combined, git_commit=git_commit,
+                        notes={"per_stage_dataflow": per_stage_choice},
+                    ))
+                    print(f"[exp6]   best_fixed_per_stage: status=OK util={baselines.best_fixed_per_stage_combined.pe_utilization_pct:.2f}%")
+                else:
+                    missing = sorted({a.stage_name for a in baselines.best_fixed_per_stage.all_attempts}
+                                      - set(baselines.best_fixed_per_stage.winners))
+                    failed = SimulationResult(
+                        exec_cycles=0, pe_utilization_pct=0.0, sram_dram_traffic_bytes=0,
+                        wall_clock_s=sum(a.result.wall_clock_s for a in baselines.best_fixed_per_stage.all_attempts),
+                        status="FAILED", notes=f"stage(s) with zero successful dataflow candidates: {missing}",
+                    )
+                    logging_utils.append_run_row(csv_path, _base_row(
+                        method="best_fixed_per_stage", hardware=hardware, workload=workload, dataflow_mode="mixed",
+                        seed=-1, iteration=0, result=failed, git_commit=git_commit, notes={"missing_stages": missing},
+                    ))
+                    print(f"[exp6]   best_fixed_per_stage: status=FAILED (no winner for {missing})")
 
             # --- Zero-shot transfer (role: zero_shot_transfer) ---
+            if "zero_shot_transfer" not in args.roles:
+                print("[exp6]   (zero_shot_transfer skipped -- --roles did not include it; reusing already-logged data)")
+                transfer_seeds_this_cell: list[int] = []
+            else:
+                transfer_seeds_this_cell = transfer_seeds
             problem = AttentionMappingProblem(
                 workload, hardware, traffic_penalty_weight=0.01, failed_run_penalty_reward=-1000.0,
                 scratch_dir=cell_scratch / "zero_shot_transfer",
             )
-            for source_seed in transfer_seeds:
+            for source_seed in transfer_seeds_this_cell:
                 action = source_actions[source_seed]
                 result = problem.evaluate(action)
                 dataflow_summary = "-".join(action.stages[name].dataflow_mode for name in STAGE_NAMES)
@@ -259,35 +275,38 @@ def main() -> None:
                     dataflow_mode=dataflow_summary, seed=source_seed, iteration=0,
                     result=result.simulation, git_commit=git_commit, notes=notes,
                 ))
-            print(f"[exp6]   zero_shot_transfer: {len(transfer_seeds)} source actions evaluated")
+            if transfer_seeds_this_cell:
+                print(f"[exp6]   zero_shot_transfer: {len(transfer_seeds_this_cell)} source actions evaluated")
 
             # --- Fresh ceiling (role: fresh_ceiling) ---
-            optimizer_name, _ = _load_selected_optimizer()
-            for seed in args.seeds:
-                fresh_problem = AttentionMappingProblem(
-                    workload, hardware, traffic_penalty_weight=0.01, failed_run_penalty_reward=-1000.0,
-                    scratch_dir=cell_scratch / "fresh_ceiling" / f"seed{seed}",
-                )
-                _, optimizer = _load_selected_optimizer()  # fresh instance per seed (some hold internal state)
-                results = optimizer.run(fresh_problem, n_iterations=args.n_iterations, seed=seed)
-                for i, r in enumerate(results):
-                    per_stage = {
-                        name: {
-                            "dataflow_mode": sa.dataflow_mode,
-                            "ifmap_frac": round(sa.ifmap_frac, 4), "filter_frac": round(sa.filter_frac, 4),
-                            "ofmap_frac": round(sa.ofmap_frac, 4),
+            if "fresh_ceiling" not in args.roles:
+                print("[exp6]   (fresh_ceiling skipped -- --roles did not include it)")
+            else:
+                for seed in args.seeds:
+                    fresh_problem = AttentionMappingProblem(
+                        workload, hardware, traffic_penalty_weight=0.01, failed_run_penalty_reward=-1000.0,
+                        scratch_dir=cell_scratch / "fresh_ceiling" / f"seed{seed}",
+                    )
+                    _, optimizer = _load_selected_optimizer()  # fresh instance per seed (some hold internal state)
+                    results = optimizer.run(fresh_problem, n_iterations=args.n_iterations, seed=seed)
+                    for i, r in enumerate(results):
+                        per_stage = {
+                            name: {
+                                "dataflow_mode": sa.dataflow_mode,
+                                "ifmap_frac": round(sa.ifmap_frac, 4), "filter_frac": round(sa.filter_frac, 4),
+                                "ofmap_frac": round(sa.ofmap_frac, 4),
+                            }
+                            for name, sa in r.action.stages.items()
                         }
-                        for name, sa in r.action.stages.items()
-                    }
-                    dataflow_summary = "-".join(r.action.stages[name].dataflow_mode for name in STAGE_NAMES)
-                    notes = {"stages": per_stage, "reward": round(r.reward, 6), "sim_notes": r.simulation.notes}
-                    logging_utils.append_run_row(csv_path, _base_row(
-                        method="fresh_ceiling", hardware=hardware, workload=workload,
-                        dataflow_mode=dataflow_summary, seed=seed, iteration=i,
-                        result=r.simulation, git_commit=git_commit, notes=notes,
-                    ))
-                rewards = [r.reward for r in results]
-                print(f"[exp6]   fresh_ceiling seed={seed}: {len(results)} evals, best reward={max(rewards):.3f}")
+                        dataflow_summary = "-".join(r.action.stages[name].dataflow_mode for name in STAGE_NAMES)
+                        notes = {"stages": per_stage, "reward": round(r.reward, 6), "sim_notes": r.simulation.notes}
+                        logging_utils.append_run_row(csv_path, _base_row(
+                            method="fresh_ceiling", hardware=hardware, workload=workload,
+                            dataflow_mode=dataflow_summary, seed=seed, iteration=i,
+                            result=r.simulation, git_commit=git_commit, notes=notes,
+                        ))
+                    rewards = [r.reward for r in results]
+                    print(f"[exp6]   fresh_ceiling seed={seed}: {len(results)} evals, best reward={max(rewards):.3f}")
 
         except Exception as e:
             print(f"[exp6]   {workload_name} x {hw_name}: UNEXPECTED ERROR, skipping rest of this cell: {e}")
