@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use this work, please cite it as below."
+title: "Learning-Based Dataflow Optimisation for Transformer Attention Kernels on Systolic Arrays"
+type: software
+authors:
+  - family-names: Perera
+    given-names: Linuk
+license: MIT
+repository-code: "https://github.com/LinukPerera/systolic-attention-mapper"
+keywords:
+  - systolic array
+  - dataflow
+  - transformer attention
+  - design-space exploration
+  - reinforcement learning
+  - SCALE-Sim
+date-released: 2026-10-25
