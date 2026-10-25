@@ -62,13 +62,13 @@ Fabricating hardware was out of scope, so the "chip" is **SCALE-Sim 3.0.0**, a c
 
 <sub>**Figure 3 · The hardware-in-the-loop search.** The figure cycles through the ten proposals of one real run (A2C, seed 2, sequence 256 on a 32×32 array), showing each proposed per-stage dataflow and the utilisation the simulator measured for it.</sub>
 
-Formally, a candidate is a point $a \in [0,1]^9$: three numbers per stage, decoded into a dataflow $\in \lbrace \mathrm{WS}, \mathrm{OS}, \mathrm{IS} \rbrace$ and a split of the on-chip SRAM between the *ifmap*, *filter* and *ofmap* buffers. The simulator is called once per stage and the three results are combined; the reward penalises memory traffic so that utilisation cannot be bought with DRAM stalls:
+Formally, a candidate is a point *a* ∈ [0, 1]⁹: three numbers per stage, decoded into a dataflow ∈ {WS, OS, IS} and a split of the on-chip SRAM between the *ifmap*, *filter* and *ofmap* buffers. The simulator is called once per stage and the three results are combined; the reward penalises memory traffic so that utilisation cannot be bought with DRAM stalls:
 
-$$
-r = U - \lambda \frac{T}{M} \qquad\text{with}\qquad U = \frac{\sum_{s} C_s U_s}{\sum_{s} C_s}
-$$
+<p align="center"><img src="docs/paper/figures/fig03b_reward.svg" alt="Equation 1: r equals U minus lambda times T over M, where U is the reward for busy processing elements and lambda T over M penalises SRAM to DRAM traffic per multiply-accumulate. Equation 2: U equals the sum over stages of cycles C_s times utilisation U_s, divided by the sum of cycles C_s. Lambda is 0.01." width="100%"></p>
 
-where for stage $s$, $C_s$ is the cycle count and $U_s$ the PE utilisation; $T$ is total SRAM↔DRAM traffic, $M$ the total multiply-accumulates, and $\lambda = 0.01$. Four interchangeable search engines sit behind one interface — **A2C** and **PPO** (stable-baselines3; plain REINFORCE is not available there, so A2C substitutes), an **evolutionary** search (DEAP) and **Bayesian optimisation** (Optuna's TPE).
+<sub>**Equation figure · The reward, typeset as a figure so it reads the same on every device.** *s* indexes the three stages; *C<sub>s</sub>* is a stage's cycle count and *U<sub>s</sub>* its PE utilisation; *T* is total SRAM↔DRAM traffic, *M* the total multiply-accumulates, and *λ* = 0.01.</sub>
+
+Four interchangeable search engines sit behind one interface — **A2C** and **PPO** (stable-baselines3; plain REINFORCE is not available there, so A2C substitutes), an **evolutionary** search (DEAP) and **Bayesian optimisation** (Optuna's TPE).
 
 ### 3.2 What a search actually does
 

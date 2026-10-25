@@ -516,6 +516,122 @@ def fig06_bakeoff() -> Plate:
     return p
 
 
+# ======================================================================================
+# Fig. 3b — the reward, typeset (replaces LaTeX in the README so it also reads on mobile)
+# ======================================================================================
+_FM: dict = {}
+
+
+def mw(s: str, size: float, italic: bool = False) -> float:
+    """Advance width of `s` in the embedded STIX face — lets the equations be laid out exactly."""
+    if italic not in _FM:
+        from fontTools.ttLib import TTFont
+        f = TTFont(str(svgkit._font_dir() / ("STIXGeneralItalic.ttf" if italic else "STIXGeneral.ttf")))
+        _FM[italic] = (f.getBestCmap(), f["hmtx"], f["head"].unitsPerEm)
+    cmap, hmtx, upm = _FM[italic]
+    return sum(hmtx[cmap[ord(c)]][0] for c in s if ord(c) in cmap) / upm * size
+
+
+def run_w(pieces: list, size: float) -> float:
+    """pieces: (text, italic, fill, sub) tuples, or a float = gap in em."""
+    w = 0.0
+    for pc in pieces:
+        if isinstance(pc, (int, float)):
+            w += pc * size
+        else:
+            t, it, _, sub = pc
+            w += mw(t, size * (0.7 if sub else 1), it)
+    return w
+
+
+def run(x: float, y: float, pieces: list, size: float) -> str:
+    out = []
+    for pc in pieces:
+        if isinstance(pc, (int, float)):
+            x += pc * size
+            continue
+        t, it, fill, sub = pc
+        sz = size * (0.7 if sub else 1)
+        out.append(text(x, y + (0.22 * size if sub else 0), t, sz, "sf", fill, italic=it))
+        x += mw(t, sz, it)
+    return "".join(out)
+
+
+def frac(x: float, y: float, num_: list, den: list, size: float, stroke: str = "ink", lift: float = 0) -> tuple[str, float]:
+    """A fraction whose bar sits on the math axis; returns (svg, width)."""
+    wn, wd = run_w(num_, size), run_w(den, size)
+    w = max(wn, wd) + 0.35 * size
+    bar = y - 0.27 * size
+    svg = (line(x + 0.05 * size, bar, x + w - 0.05 * size, bar, stroke=stroke, sw=1.3)
+           + run(x + (w - wn) / 2, bar - (0.2 + lift) * size, num_, size)
+           + run(x + (w - wd) / 2, bar + (0.78 + lift * 0.6) * size, den, size))
+    return svg, w
+
+
+def fig03b_reward() -> Plate:
+    cy = Cycle(T=15, hold=3.4)
+    p = Plate(552, "common/optimizers/environment.py — reward as implemented; \u03bb = 0.01 (schematic typesetting)",
+              "The reward is r = U minus lambda times T over M. U, the cycle-weighted mean PE utilisation, is the reward; "
+              "lambda T over M penalises SRAM-DRAM traffic per multiply-accumulate. U is the sum over stages of cycles "
+              "times utilisation, divided by the sum of cycles.", cycle=cy,
+              title="The reward: utilisation minus a traffic penalty")
+    S = 36
+    b = []
+    cx = 480
+    # ---- equation (1)
+    seg_a = [("r", True, "ink", False), 0.35, ("=", False, "ink", False), 0.35]
+    seg_u = [("U", True, "acc", False), 0.3]
+    seg_m = [("\u2212", False, "ink", False), 0.3, ("\u03bb", True, "warm", False), 0.12]
+    fsvg_w = frac(0, 0, [("T", True, "warm", False)], [("M", True, "warm", False)], S)[1]
+    wa, wu, wm = run_w(seg_a, S), run_w(seg_u, S), run_w(seg_m, S) + fsvg_w
+    x0 = cx - (wa + wu + wm) / 2
+    y1 = 120
+    b.append(R(cy, 0.1, text(60, 58, "Equation 1 · the reward a search is trained on", 12.5, "sf", "mute", italic=True),
+               text(900, 58, "(1)", 13, "sf", "mute", anchor="end"), kind="fade"))
+    b.append(R(cy, 0.5, run(x0, y1, seg_a, S), kind="fade"))
+    b.append(R(cy, 1.1, run(x0 + wa, y1, seg_u, S), kind="fade"))
+    fs, _ = frac(x0 + wa + wu + run_w(seg_m, S), y1, [("T", True, "warm", False)], [("M", True, "warm", False)], S, "warm")
+    b.append(R(cy, 1.8, run(x0 + wa + wu, y1, seg_m, S), fs, kind="fade"))
+    # brace-like marks and captions under each term
+    xu0, xu1 = x0 + wa, x0 + wa + run_w(seg_u, S) - 0.3 * S
+    xm0, xm1 = x0 + wa + wu, x0 + wa + wu + wm
+    ya = y1 + 0.78 * S + 16
+    b.append(R(cy, 2.5,
+               line(xu0, ya, xu1, ya, stroke="acc", sw=1.2), line(xm0, ya, xm1, ya, stroke="warm", sw=1.2),
+               tspans(xu1 + 14, ya + 24, ["reward for busy PEs:", "cycle-weighted mean", "utilisation, 0 – 100 %"], 12.5, "sf", "acc", italic=True, anchor="end"),
+               tspans(xm0 + 40, ya + 24, ["penalty for data movement:", "SRAM\u2194DRAM traffic per", "multiply-accumulate, weighted by \u03bb"], 12.5, "sf", "warm", italic=True),
+               kind="fade"))
+    # ---- divider
+    b.append(R(cy, 3.2, line(60, 262, 900, 262, stroke="hair", sw=1), kind="fade"))
+    # ---- equation (2)
+    y2 = 356
+    nu = [("\u03a3", False, "ink", False), ("s", True, "ink", True), 0.3, ("C", True, "ink", False), ("s", True, "ink", True), 0.22,
+          ("U", True, "acc", False), ("s", True, "acc", True)]
+    de = [("\u03a3", False, "ink", False), ("s", True, "ink", True), 0.3, ("C", True, "ink", False), ("s", True, "ink", True)]
+    seg_l = [("U", True, "acc", False), 0.35, ("=", False, "ink", False), 0.35]
+    fs2, fw2 = frac(0, 0, nu, de, S)
+    x1 = cx - (run_w(seg_l, S) + fw2) / 2
+    fs2, _ = frac(x1 + run_w(seg_l, S), y2, nu, de, S, lift=0.14)
+    b.append(R(cy, 3.8, text(60, 300, "Equation 2 · utilisation, weighted by how long each stage runs", 12.5, "sf", "mute", italic=True),
+               text(900, 300, "(2)", 13, "sf", "mute", anchor="end"),
+               run(x1, y2, seg_l, S), fs2, kind="fade"))
+    b.append(R(cy, 4.6, tspans(cx, y2 + 0.78 * S + 38, ["A stage that runs longer counts for more, so a mapping cannot look good",
+                                                        "by being fast on a stage that barely matters."], 13, "sf", "ink2", anchor="middle", italic=True),
+               kind="fade"))
+    # ---- legend
+    items = [("s", "stage: QKV, Q\u00b7K^{T} or scores\u00b7V"), ("C", "cycles the simulator reports for stage s"),
+             ("U", "PE utilisation of stage s"), ("T", "total SRAM\u2194DRAM traffic (words)"),
+             ("M", "total multiply-accumulates"), ("\u03bb", "= 0.01, fixed before any result")]
+    legend = []
+    for i, (sym, desc) in enumerate(items):
+        xx = 60 + (i % 3) * 290
+        yy = 486 + (i // 3) * 22
+        legend.append(text(xx, yy, sym, 14, "sf", "ink", italic=True) + text(xx + 20, yy, desc, 12.5, "sf", "ink2"))
+    b.append(R(cy, 5.4, text(60, 462, "where", 12.5, "sf", "mute", italic=True), *legend, kind="fade"))
+    p.add(*b)
+    return p
+
+
 def csv_(rel: str) -> pd.DataFrame:
     return pd.read_csv(EXP / rel)
 
@@ -961,6 +1077,7 @@ FIGS = {
     "fig01_problem": fig01_problem,
     "fig02_dataflows": fig02_dataflows,
     "fig03_loop": fig03_loop,
+    "fig03b_reward": fig03b_reward,
     "fig04_trajectory": fig04_trajectory,
     "fig05_programme": fig05_programme,
     "fig06_bakeoff": fig06_bakeoff,
